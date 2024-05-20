@@ -171,6 +171,7 @@ dependencies = [
  "dotenv",
  "reqwest",
  "rustpython",
+ "rustpython-stdlib",
  "rustpython-vm",
  "secrecy",
  "serde",

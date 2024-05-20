@@ -1,27 +1,37 @@
-use rustpython::vm::Settings;
+use rustpython::vm::{py_freeze, Settings};
+use rustpython::InterpreterConfig;
 use rustpython_vm as vm;
 
-pub fn run_python(code: &str) -> vm::PyResult<()> {
-    let settings = Settings::default();
-    let settings = Settings::with_path(settings, "/Users/jichen/.cargo/bin/rustpython".to_owned());
-
-    let mut interpreter = vm::Interpreter::with_init(settings, |_| {});
-    // let mut settings = Settings::default();
-    // settings
-    //     .path_list
-    //     .push("/Users/jichen/.cargo/bin/rustpython".to_owned()); // Update this path
-
+pub fn run_python(code: &str) {
+    let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
     interpreter.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
-        let source = code;
         let code_obj = vm
-            .compile(source, vm::compiler::Mode::Exec, "<embedded>".to_owned())
-            .map_err(|err| vm.new_syntax_error(&err, Some(source)))?;
+            .compile(code, vm::compiler::Mode::Exec, "<embedded>".to_owned())
+            .map_err(|err| vm.new_syntax_error(&err, Some(code)))
+            .expect("msg");
 
-        vm.run_code_obj(code_obj, scope)?;
+        vm.run_code_obj(code_obj, scope).expect("msg");
+    });
+}
 
-        Ok(())
+pub fn run_python_vm(code: &str) {
+    let settings = Settings::default();
+    let settings = Settings::with_path(settings, "/Users/jichen/.cargo/bin/rustpython".to_owned());
+    // let settings = Settings::with_path(
+    //     settings,
+    //     "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/".to_owned(),
+    // );
+
+    vm::Interpreter::with_init(settings, |vm| {
+        vm.add_native_modules(rustpython_stdlib::get_module_inits());
+        vm.add_frozen(rustpython_vm::py_freeze!(
+            dir = "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/"
+        ));
     })
+    .enter(|vm| {
+        vm.run_code_string(vm.new_scope_with_builtins(), code, "<...>".to_owned());
+    });
 }
 
 pub fn run_python_func(func_path: &str) -> anyhow::Result<String, String> {

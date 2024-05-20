@@ -29,7 +29,7 @@ async fn main() {
     let code_in_file = include_str!("search_paper.py");
     // let code = r#"print("hello")"#;
 
-    let res = run_python(&code_in_file);
+    let res = run_python_vm(&code_in_file);
 
     println!("{:?}", res);
 }
