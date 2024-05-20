@@ -1,18 +1,48 @@
+use anyhow;
 use rustpython::vm::{py_freeze, Settings};
 use rustpython::InterpreterConfig;
 use rustpython_vm as vm;
+use vm::{
+    object::{PyObject, PyObjectRef, PyResult},
+    Interpreter,
+};
+use std::sync::{Arc, Mutex};
+use std::io::{self, Write};
 
-pub fn run_python(code: &str) {
+pub fn run_python(code: &str) -> anyhow::Result<String, String> {
     let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
     interpreter.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
+
         let code_obj = vm
             .compile(code, vm::compiler::Mode::Exec, "<embedded>".to_owned())
-            .map_err(|err| vm.new_syntax_error(&err, Some(code)))
-            .expect("msg");
+            .map_err(|err| format!("Compilation error: {}", err))?;
 
-        vm.run_code_obj(code_obj, scope).expect("msg");
-    });
+        let result = vm.run_code_obj(code_obj, scope);
+
+        match result {
+            Ok(output) => {
+                let output_str = output
+                    .downcast_ref::<vm::builtins::PyStr>()
+                    .ok_or_else(|| "Output is not a string type".to_string())?
+                    .to_string();
+                println!("{:?}", output_str);
+                Ok(format!("Output: {}", output_str))
+            }
+            Err(e) => {
+                let error_message = if let Some(args) = e.args().as_slice().first() {
+                    args.downcast_ref::<vm::builtins::PyStr>()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "Unknown error".to_string())
+                } else {
+                    "No error message available".to_string()
+                };
+                // println!("{:?}", error_message);
+
+                Err(format!("Failed to execute command: {}", error_message))
+            }
+        }
+    })
 }
 
 pub fn run_python_vm(code: &str) {

@@ -29,9 +29,10 @@ async fn main() {
     let code_in_file = include_str!("search_paper.py");
     // let code = r#"print("hello")"#;
 
-    let res = run_python_vm(&code_in_file);
-
-    println!("{:?}", res);
+    match run_python(&code_in_file) {
+        Ok(res) => println!("{:?}", res),
+        Err(res) => println!("{:?}", res),
+    };
 }
 
 // export RUSTPYTHONPATH="/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib"

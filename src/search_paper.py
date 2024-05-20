@@ -4,7 +4,7 @@ from xml.etree import ElementTree
 
 def debug_arxiv_search():
     # Simplify the query to check basic functionality
-    url = "http://export.arxiv.org/api/query?search_query=all:GPT&start=0&max_results=10"
+    url = "http://expot.arxiv.org/api/query?search_query=all:GPT&start=0&max_results=10"
     try:
         with urllib.request.urlopen(url) as response:
             result = response.read()
