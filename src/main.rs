@@ -33,3 +33,5 @@ async fn main() {
 
     println!("{:?}", res);
 }
+
+// export RUSTPYTHONPATH="/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib"
