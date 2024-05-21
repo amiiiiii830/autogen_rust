@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct ToolsOutputs {
     pub tool_call_id: Option<String>,
@@ -51,28 +51,14 @@ impl Message {
     }
 }
 
-#[async_trait]
-pub trait Agent: Send + Sync {
+pub trait Agent {
     fn name(&self) -> String;
 
     fn description(&self) -> String;
 
-    async fn send(
-        &self,
-        message: Message,
-        recipient: Arc<dyn Agent + Send>,
-        request_reply: Option<bool>,
-    );
-
-    async fn a_generate_reply(
-        &self,
-        messages: Vec<Message>,
-        sender: Option<Arc<dyn Agent + Send>>,
-    ) -> Option<Message>;
-
     fn system_message(&self) -> String;
-    fn chat_messages(&self) -> Option<Vec<Message>>;
-    async fn update_system_message(&mut self, system_message: String);
+
+    fn set_description(&mut self, description: String);
 }
 
 pub struct ConversableAgent {
@@ -84,10 +70,9 @@ pub struct ConversableAgent {
     pub llm_config: Option<Value>,
     pub default_auto_reply: Value,
     pub description: String,
-    pub chat_messages: Option<Vec<Message>>,
+    pub chat_messages: Option<Arc<Mutex<Vec<Message>>>>,
 }
 
-#[async_trait]
 impl Agent for ConversableAgent {
     fn name(&self) -> String {
         self.name.clone()
@@ -97,19 +82,43 @@ impl Agent for ConversableAgent {
         self.description.clone()
     }
 
-    async fn send(
-        &self,
-        message: Message,
-        recipient: Arc<dyn Agent + Send>,
-        request_reply: Option<bool>,
-    ) {
-        recipient.chat_messages().expect("REASON").push(message);
+    fn system_message(&self) -> String {
+        self.system_message.clone()
     }
 
-    async fn a_generate_reply(
+    fn set_description(&mut self, description: String) {
+        self.description = description;
+    }
+}
+
+impl ConversableAgent {
+ pub   fn new(name: &str) -> Self {
+        ConversableAgent {
+            name: name.to_string(),
+            system_message: String::from("you act as user proxy"),
+            max_consecutive_auto_reply: 10,
+            human_input_mode: String::from("ALWAYS"),
+            function_map: String::from("fake functions"),
+            llm_config: None,
+            default_auto_reply: json!("this is user_proxy"),
+            description: String::from("agent acting as user_proxy"),
+            chat_messages: Some(Arc::new(Mutex::new(vec![]))),
+        }
+    }
+  pub  async fn send(
+        &self,
+        message: Message,
+        recipient: Arc<ConversableAgent>,
+        request_reply: Option<bool>,
+    ) {
+        let mut chat_messages = recipient.chat_messages.as_ref().unwrap().lock().unwrap();
+        chat_messages.push(message);
+    }
+
+  pub  async fn a_generate_reply(
         &self,
         messages: Vec<Message>,
-        sender: Option<Arc<dyn Agent + Send>>,
+        sender: Option<Arc<ConversableAgent>>,
     ) -> Option<Message> {
         let max_token = 1000u16;
         let output: LlamaResponseMessage = chat_inner_async_llama(messages, max_token)
@@ -124,42 +133,32 @@ impl Agent for ConversableAgent {
         })
     }
 
-    fn system_message(&self) -> String {
-        self.system_message.clone()
-    }
-
-    fn chat_messages(&self) -> Option<Vec<Message>> {
-        self.chat_messages
-    }
-    async fn update_system_message(&mut self, system_message: String) {
+    pub      async fn update_system_message(&mut self, system_message: String) {
         self.system_message = system_message.to_string();
     }
-}
 
-impl ConversableAgent {
-    pub fn get_human_input(&self) -> String {
+    pub     fn get_human_input(&self) -> String {
         self.human_input_mode.clone()
     }
 
-    pub fn execute_code_blocks(&self, code_blocks: &str) -> String {
+    pub    fn execute_code_blocks(&self, code_blocks: &str) -> String {
         match run_python(code_blocks) {
             Ok(res) => res,
             Err(res) => res,
         }
     }
 
-    pub fn set_description(&mut self, description: String) {
+    pub    fn set_description(&mut self, description: String) {
         self.description = description;
     }
 
-    pub fn chat_messages(&self) -> Option<Vec<Message>> {
-        self.chat_messages
-    }
-
-    pub fn last_message(&self) -> Option<Message> {
-        match self.chat_messages {
-            Some(messages) => messages.last().cloned(),
-            None => None,
+    pub     fn last_message(&self) -> Option<Message> {
+        if let Some(ref chat_messages) = self.chat_messages {
+            let messages = chat_messages.lock().unwrap(); // Lock the mutex and access the vector
+            messages.last().cloned() // Clone the last message if there is one
+        } else {
+            None
         }
     }
+
 }

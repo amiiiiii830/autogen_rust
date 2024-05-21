@@ -1,3 +1,5 @@
+use async_openai::types::Role;
+use autogen_rust::conversable_agent::*;
 use autogen_rust::exec_python::*;
 use autogen_rust::llama_structs::*;
 use autogen_rust::llm_llama_local::*;
@@ -26,13 +28,26 @@ async fn main() {
     //     .expect("failed to get webpage text");
     // match std::process::Command::new("/Users/jichen/miniconda3/bin/python")
 
-    let code_in_file = include_str!("search_paper.py");
-    // let code = r#"print("hello")"#;
+    // let code_in_file = include_str!("search_paper.py");
+    // // let code = r#"print("hello")"#;
 
-    match run_python(&code_in_file) {
-        Ok(res) => (),
-        Err(res) => (),
-    };
+    // match run_python(&code_in_file) {
+    //     Ok(res) => (),
+    //     Err(res) => (),
+    // };
+
+    let user_proxy_a = ConversableAgent::new("a");
+    let user_proxy_b = ConversableAgent::new("b");
+
+    let message = Message::new(
+        Some(Content::Text("hello".to_string())),
+        Some("random".to_string()),
+        Some(Role::User),
+        None,
+    );
+    user_proxy_a.send(message, user_proxy_a.into(), None);
+
+    println!("{:?}", user_proxy_a.last_message());
 }
 
 // export RUSTPYTHONPATH="/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib"
