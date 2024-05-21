@@ -30,8 +30,8 @@ async fn main() {
     // let code = r#"print("hello")"#;
 
     match run_python(&code_in_file) {
-        Ok(res) => println!("{:?}", res),
-        Err(res) => println!("{:?}", res),
+        Ok(res) => (),
+        Err(res) => (),
     };
 }
 

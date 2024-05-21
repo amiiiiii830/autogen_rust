@@ -1,11 +1,12 @@
-/* use crate::llama_structs::*;
-use async_openai::types::{CompletionUsage, CreateChatCompletionResponse, Role};
+use crate::exec_python::run_python;
+use crate::llama_structs::*;
+use crate::llm_llama_local::chat_inner_async_llama;
+use async_openai::types::Role;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::default;
 use std::sync::Arc;
 
 pub struct ToolsOutputs {
@@ -13,20 +14,28 @@ pub struct ToolsOutputs {
     pub output: Option<String>,
 }
 
-// Define a struct for the context, which is a map with String keys and String values.
 type Context = HashMap<String, String>;
 
-// Define the main Message struct with the possible fields as described.
-#[derive(Serialize, Deserialize, Debug)]
-struct Message {
-    content: Option<Content>,
-    name: Option<String>,
-    role: Option<Role>,
-    context: Option<Context>,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Message {
+    pub content: Option<Content>,
+    pub name: Option<String>,
+    pub role: Option<Role>,
+    pub context: Option<Context>,
+}
+
+impl Default for Message {
+    fn default() -> Self {
+        Message {
+            content: None,
+            name: None,
+            role: None,
+            context: None,
+        }
+    }
 }
 
 impl Message {
-    // Define a constructor or a method to create a new `Message` instance if needed.
     pub fn new(
         content: Option<Content>,
         name: Option<String>,
@@ -43,122 +52,114 @@ impl Message {
 }
 
 #[async_trait]
-pub trait Agent {
-    /// Returns the name of the agent.
-    fn name(&self) -> &str;
+pub trait Agent: Send + Sync {
+    fn name(&self) -> String;
 
-    /// Returns the description of the agent.
-    fn description(&self) -> &str;
+    fn description(&self) -> String;
 
-    /// Sends a message to another agent.
-    async fn send(&self, message: Message, recipient: &dyn Agent, request_reply: Option<bool>);
-
-    /// Receives a message from another agent.
-    async fn receive(&self, message: Message, sender: &dyn Agent, request_reply: Option<bool>);
-
-    /// Asynchronously generates a reply based on the received messages.
-    async fn a_generate_reply(
+    async fn send(
         &self,
-        messages: Option<Vec<Message>>,
-        sender: Option<&dyn Agent>,
-    ) -> Option<Message>;
-
-    fn system_message(&self) -> &str;
-
-    async fn update_system_message(&mut self, system_message: &str);
-}
-
-pub struct ConversableAgent<Agent: ?Sized> {
-    name: String,
-    system_message: String,
-    max_consecutive_auto_reply: i32,
-    human_input_mode: String,
-    function_map: HashMap<String, Arc<dyn Fn(&[Value]) -> Value + Send + Sync>>,
-    // code_execution_config: Value,
-    llm_config: Option<Value>,
-    default_auto_reply: Value,
-    description: String,
-    chat_messages: Option<Vec<Message>>,
-    // Other fields as needed
-}
-
-impl Agent for ConversableAgent<Agent> {
-    fn name(&self) -> &str {
-        self.name.clone().as_str()
-    }
-
-    fn description(&self) -> &str {
-        self.description.clone().as_str()
-    }
-
-    async fn send(&self, message: Message, recipient: &dyn Agent, request_reply: Option<bool>) {
-        recipient.chat_messages.push(message);
-    }
-
-    /// Receives a message from another agent.
-    async fn receive(&self, message: Message, sender: &dyn Agent, request_reply: Option<bool>);
-
-    /// Asynchronously generates a reply based on the received messages.
-    async fn a_generate_reply(
-        &self,
-        messages: Option<Vec<Message>>,
-        sender: Option<&dyn Agent>,
-    ) -> Option<Message>;
-
-    fn system_message(&self) -> &str;
-
-    async fn update_system_message(&mut self, system_message: &str);
-}
-
-impl ConversableAgent<Agent> {
-    // Additional methods specific to ConversableAgent
-    fn get_human_input(&self) -> String;
-    fn execute_code_blocks(&self, code_blocks: &str) -> String;
-    fn run_code(&self, code: &str) -> String;
-    fn execute_function(&self, function_name: &str, args: &[Value]) -> String;
-    fn convert(&self) -> String;
-    fn set_description(&mut self, description: String);
-
-    // Getter for code_executor
-    // fn code_executor(&self) -> Option<&YourCodeExecutorType>;
-
-    // Method to register a reply function
-    fn register_reply(
-        &mut self,
-        trigger: Trigger,
-        reply_func: Arc<dyn Fn(&Self, &Value, &Self) -> String + Send + Sync>,
-        position: usize,
-        // ... other parameters
+        message: Message,
+        recipient: Arc<dyn Agent + Send>,
+        request_reply: Option<bool>,
     );
 
-    // Method to replace a reply function
-    fn replace_reply_func(
-        &mut self,
-        old_reply_func: Arc<dyn Fn(&Self, &Value, &Self) -> String + Send + Sync>,
-        new_reply_func: Arc<dyn Fn(&Self, &Value, &Self) -> String + Send + Sync>,
-    );
+    async fn a_generate_reply(
+        &self,
+        messages: Vec<Message>,
+        sender: Option<Arc<dyn Agent + Send>>,
+    ) -> Option<Message>;
 
-    fn is_termination_msg(&self, message: &Value) -> bool {
-        // Call the closure that determines if the message is a termination message
-        (self.is_termination_msg_fn)(message)
+    fn system_message(&self) -> String;
+    fn chat_messages(&self) -> Option<Vec<Message>>;
+    async fn update_system_message(&mut self, system_message: String);
+}
+
+pub struct ConversableAgent {
+    pub name: String,
+    pub system_message: String,
+    pub max_consecutive_auto_reply: i32,
+    pub human_input_mode: String,
+    pub function_map: String,
+    pub llm_config: Option<Value>,
+    pub default_auto_reply: Value,
+    pub description: String,
+    pub chat_messages: Option<Vec<Message>>,
+}
+
+#[async_trait]
+impl Agent for ConversableAgent {
+    fn name(&self) -> String {
+        self.name.clone()
     }
 
-    // Method to update max_consecutive_auto_reply
-    fn update_max_consecutive_auto_reply(&mut self, value: i32, sender: Option<&Self>);
+    fn description(&self) -> String {
+        self.description.clone()
+    }
 
-    // Method to get max_consecutive_auto_reply
-    fn max_consecutive_auto_reply(&self, sender: Option<&Self>) -> i32;
+    async fn send(
+        &self,
+        message: Message,
+        recipient: Arc<dyn Agent + Send>,
+        request_reply: Option<bool>,
+    ) {
+        recipient.chat_messages().expect("REASON").push(message);
+    }
 
-    // Method to get chat_messages
-    fn chat_messages(&self) -> HashMap<AgentId, Vec<Value>>;
+    async fn a_generate_reply(
+        &self,
+        messages: Vec<Message>,
+        sender: Option<Arc<dyn Agent + Send>>,
+    ) -> Option<Message> {
+        let max_token = 1000u16;
+        let output: LlamaResponseMessage = chat_inner_async_llama(messages, max_token)
+            .await
+            .expect("Failed to generate reply");
 
-    // Method to get chat_messages for summary
-    fn chat_messages_for_summary(&self, agent: AgentId) -> Vec<Value>;
+        Some(Message {
+            content: Some(output.content),
+            name: None,
+            role: None,
+            context: None,
+        })
+    }
 
-    // Method to get last_message
-    fn last_message(&self, agent: Option<AgentId>) -> Option<Value>;
+    fn system_message(&self) -> String {
+        self.system_message.clone()
+    }
 
-    // Getter for use_docker
-    fn use_docker(&self) -> Option<bool>;
+    fn chat_messages(&self) -> Option<Vec<Message>> {
+        self.chat_messages
+    }
+    async fn update_system_message(&mut self, system_message: String) {
+        self.system_message = system_message.to_string();
+    }
 }
- */
+
+impl ConversableAgent {
+    pub fn get_human_input(&self) -> String {
+        self.human_input_mode.clone()
+    }
+
+    pub fn execute_code_blocks(&self, code_blocks: &str) -> String {
+        match run_python(code_blocks) {
+            Ok(res) => res,
+            Err(res) => res,
+        }
+    }
+
+    pub fn set_description(&mut self, description: String) {
+        self.description = description;
+    }
+
+    pub fn chat_messages(&self) -> Option<Vec<Message>> {
+        self.chat_messages
+    }
+
+    pub fn last_message(&self) -> Option<Message> {
+        match self.chat_messages {
+            Some(messages) => messages.last().cloned(),
+            None => None,
+        }
+    }
+}

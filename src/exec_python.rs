@@ -2,12 +2,12 @@ use anyhow;
 use rustpython::vm::{py_freeze, Settings};
 use rustpython::InterpreterConfig;
 use rustpython_vm as vm;
+use rustpython_vm::compiler::Mode;
+use std::sync::{Arc, Mutex};
 use vm::{
     object::{PyObject, PyObjectRef, PyResult},
     Interpreter,
 };
-use std::sync::{Arc, Mutex};
-use std::io::{self, Write};
 
 pub fn run_python(code: &str) -> anyhow::Result<String, String> {
     let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
@@ -24,10 +24,9 @@ pub fn run_python(code: &str) -> anyhow::Result<String, String> {
             Ok(output) => {
                 let output_str = output
                     .downcast_ref::<vm::builtins::PyStr>()
-                    .ok_or_else(|| "Output is not a string type".to_string())?
+                    .ok_or_else(|| "Code executed, failed due to internal error".to_string())?
                     .to_string();
-                println!("{:?}", output_str);
-                Ok(format!("Output: {}", output_str))
+                Ok(format!("Code executed, output: {}", output_str))
             }
             Err(e) => {
                 let error_message = if let Some(args) = e.args().as_slice().first() {
@@ -37,13 +36,12 @@ pub fn run_python(code: &str) -> anyhow::Result<String, String> {
                 } else {
                     "No error message available".to_string()
                 };
-                // println!("{:?}", error_message);
-
-                Err(format!("Failed to execute command: {}", error_message))
+                Err(format!("Code execution error message: {}", error_message))
             }
         }
     })
 }
+
 
 pub fn run_python_vm(code: &str) {
     let settings = Settings::default();
