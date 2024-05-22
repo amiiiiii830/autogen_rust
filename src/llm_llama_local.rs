@@ -152,7 +152,7 @@ impl From<Message> for ChatCompletionRequestMessage {
                     function_call: None,
                 })
             }
-            Some(r) => {
+            Some(_) => {
                 ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
                     content: Some(message.content_to_string().unwrap_or("empty".to_string())),
                     role: Role::Assistant,

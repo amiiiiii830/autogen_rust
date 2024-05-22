@@ -169,6 +169,7 @@ dependencies = [
  "async-openai",
  "async-trait",
  "dotenv",
+ "regex",
  "reqwest",
  "rustpython",
  "rustpython-stdlib",

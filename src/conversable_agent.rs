@@ -1,18 +1,12 @@
-use crate::exec_python::run_python;
+// use crate::exec_python::run_python;
 use crate::llama_structs::*;
 use crate::llm_llama_local::chat_inner_async_llama;
 use async_openai::types::Role;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-
-pub struct ToolsOutputs {
-    pub tool_call_id: Option<String>,
-    pub output: Option<String>,
-}
 
 type Context = HashMap<String, String>;
 
@@ -66,13 +60,31 @@ pub struct ConversableAgent {
     pub system_message: String,
     pub max_consecutive_auto_reply: i32,
     pub human_input_mode: String,
-    pub function_map: String,
+    pub tool_calls_meta: String,
+    pub in_tool_call: bool,
+    pub tool_call_map: String,
     pub llm_config: Option<Value>,
     pub default_auto_reply: Value,
     pub description: String,
-    pub chat_messages: Option<Arc<Mutex<Vec<Message>>>>,
+    pub chat_messages: Option<Vec<Message>>,
 }
-
+impl Clone for ConversableAgent {
+    fn clone(&self) -> Self {
+        ConversableAgent {
+            name: self.name.clone(),
+            system_message: self.system_message.clone(),
+            max_consecutive_auto_reply: self.max_consecutive_auto_reply,
+            human_input_mode: self.human_input_mode.clone(),
+            tool_calls_meta: self.tool_calls_meta.clone(),
+            in_tool_call: self.in_tool_call.clone(),
+            tool_call_map: self.tool_call_map.clone(),
+            llm_config: self.llm_config.clone(),
+            default_auto_reply: self.default_auto_reply.clone(),
+            description: self.description.clone(),
+            chat_messages: self.chat_messages.clone(),
+        }
+    }
+}
 impl Agent for ConversableAgent {
     fn name(&self) -> String {
         self.name.clone()
@@ -92,30 +104,46 @@ impl Agent for ConversableAgent {
 }
 
 impl ConversableAgent {
- pub   fn new(name: &str) -> Self {
+    pub fn new(name: &str) -> Self {
         ConversableAgent {
             name: name.to_string(),
             system_message: String::from("you act as user proxy"),
             max_consecutive_auto_reply: 10,
             human_input_mode: String::from("ALWAYS"),
-            function_map: String::from("fake functions"),
+            tool_calls_meta: String::from("fake functions"),
+            in_tool_call: false,
+            tool_call_map: String::new(),
             llm_config: None,
             default_auto_reply: json!("this is user_proxy"),
             description: String::from("agent acting as user_proxy"),
-            chat_messages: Some(Arc::new(Mutex::new(vec![]))),
+            chat_messages: Some(vec![]),
         }
     }
-  pub  async fn send(
+    pub async fn send(
         &self,
         message: Message,
-        recipient: Arc<ConversableAgent>,
+        message_store: Arc<Mutex<HashMap<String, VecDeque<Message>>>>,
+        recipient: Arc<Mutex<ConversableAgent>>,
         request_reply: Option<bool>,
     ) {
-        let mut chat_messages = recipient.chat_messages.as_ref().unwrap().lock().unwrap();
-        chat_messages.push(message);
+        let agent_id = recipient.lock().unwrap().name.clone();
+        let mut store = message_store.lock().unwrap();
+        let queue = store.entry(agent_id).or_insert_with(VecDeque::new);
+        queue.push_back(message);
     }
 
-  pub  async fn a_generate_reply(
+    pub async fn receive(
+        &self,
+        message_store: Arc<Mutex<HashMap<String, VecDeque<Message>>>>,
+        sender: Arc<Mutex<ConversableAgent>>,
+        request_reply: Option<bool>,
+    ) -> Option<Message> {
+        let agent_id = sender.lock().unwrap().name.clone();
+        let store = message_store.lock().unwrap();
+        store.get(&agent_id).and_then(|queue| queue.back().cloned())
+    }
+
+    pub async fn a_generate_reply(
         &self,
         messages: Vec<Message>,
         sender: Option<Arc<ConversableAgent>>,
@@ -133,32 +161,30 @@ impl ConversableAgent {
         })
     }
 
-    pub      async fn update_system_message(&mut self, system_message: String) {
+    pub async fn update_system_message(&mut self, system_message: String) {
         self.system_message = system_message.to_string();
     }
 
-    pub     fn get_human_input(&self) -> String {
+    pub fn get_human_input(&self) -> String {
         self.human_input_mode.clone()
     }
 
-    pub    fn execute_code_blocks(&self, code_blocks: &str) -> String {
-        match run_python(code_blocks) {
-            Ok(res) => res,
-            Err(res) => res,
-        }
+    pub fn execute_code_blocks(&self, code_blocks: &str) -> String {
+        todo!()
+        // match run_python(code_blocks) {
+        //     Ok(res) => res,
+        //     Err(res) => res,
+        // }
     }
 
-    pub    fn set_description(&mut self, description: String) {
+    pub fn set_description(&mut self, description: String) {
         self.description = description;
     }
 
-    pub     fn last_message(&self) -> Option<Message> {
-        if let Some(ref chat_messages) = self.chat_messages {
-            let messages = chat_messages.lock().unwrap(); // Lock the mutex and access the vector
-            messages.last().cloned() // Clone the last message if there is one
-        } else {
-            None
+    pub fn last_message(&self) -> Option<Message> {
+        match &self.chat_messages {
+            Some(messages) => messages.last().cloned(),
+            None => None,
         }
     }
-
 }

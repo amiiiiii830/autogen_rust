@@ -10,6 +10,7 @@ pub struct ToolCall {
     pub arguments: Option<HashMap<String, String>>,
 }
 
+#[allow(non_snake_case)]
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub enum Content {
     Text(String),
