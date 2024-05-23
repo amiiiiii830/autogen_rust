@@ -1,10 +1,11 @@
 use async_openai::types::Role;
 use autogen_rust::conversable_agent::*;
 // use autogen_rust::exec_python::*;
+use autogen_rust::call_function;
 use autogen_rust::groupchat::GroupChat;
 use autogen_rust::llama_structs::*;
 use autogen_rust::llm_llama_local::*;
-use autogen_rust::call_function;
+use autogen_rust::tool_call_actuators::FunctionRegistry;
 use autogen_rust::webscraper_hook::*;
 use regex::Regex;
 use std::sync::{Arc, Mutex};
@@ -52,13 +53,15 @@ async fn main() {
         None,
     );
 
-    let json_args = r#"{"url": "http://example.com/"}"#;
-    let result = call_function!(get_webpage_text, json_args, single).await;
-    println!("{:?}", result); // Should output the fetched content
+    let mut fr = FunctionRegistry::new();
+    fr.register_async_function("get_webpage_text", Box::new(|url| Box::new(get_webpage_text(url))));
+    // let json_args = r#"{"url": "http://example.com/"}"#;
+    // let result = call_function!(get_webpage_text, json_args, single).await;
+    // println!("{:?}", result); // Should output the fetched content
 
-    let no_args = r#"{}"#;
-    let result_no_args = call_function!(get_system_info).await;
-    println!("{:?}", result_no_args);
+    // let no_args = r#"{}"#;
+    // let result_no_args = call_function!(get_system_info).await;
+    // println!("{:?}", result_no_args);
 }
 
 pub async fn get_system_info() -> anyhow::Result<String> {

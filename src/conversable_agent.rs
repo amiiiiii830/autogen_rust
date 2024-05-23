@@ -1,8 +1,9 @@
 // use crate::exec_python::run_python;
-use crate::llama_structs::*;
 use crate::llm_llama_local::chat_inner_async_llama;
+use crate::{call_function, llama_structs::*};
+use anyhow::anyhow;
 use async_openai::types::Role;
-
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -62,7 +63,6 @@ pub struct ConversableAgent {
     pub human_input_mode: String,
     pub tool_calls_meta: String,
     pub in_tool_call: bool,
-    pub tool_call_map: String,
     pub llm_config: Option<Value>,
     pub default_auto_reply: Value,
     pub description: String,
@@ -77,7 +77,6 @@ impl Clone for ConversableAgent {
             human_input_mode: self.human_input_mode.clone(),
             tool_calls_meta: self.tool_calls_meta.clone(),
             in_tool_call: self.in_tool_call.clone(),
-            tool_call_map: self.tool_call_map.clone(),
             llm_config: self.llm_config.clone(),
             default_auto_reply: self.default_auto_reply.clone(),
             description: self.description.clone(),
@@ -112,7 +111,6 @@ impl ConversableAgent {
             human_input_mode: String::from("ALWAYS"),
             tool_calls_meta: String::from("fake functions"),
             in_tool_call: false,
-            tool_call_map: String::new(),
             llm_config: None,
             default_auto_reply: json!("this is user_proxy"),
             description: String::from("agent acting as user_proxy"),
@@ -176,6 +174,19 @@ impl ConversableAgent {
         //     Err(res) => res,
         // }
     }
+
+    // pub async fn execute_tool_call(&self, call: &ToolCall) -> anyhow::Result<String, String> {
+    //     let func = call.name.clone();
+    //     let args = call.arguments.unwrap_or_default();
+
+    //     let len = args.len();
+
+    //     match len {
+    //         0 => call_function!(&func),
+    //         1 => call_function!(&func, args, single),
+    //         _ => call_function!(&func, args, multi),
+    //     }
+    // }
 
     pub fn set_description(&mut self, description: String) {
         self.description = description;
