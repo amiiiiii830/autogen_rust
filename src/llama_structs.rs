@@ -120,22 +120,22 @@ pub async fn fire_tool_call(
     // };
     let res = chat_inner_async(&system_prompt, &user_prompt, 500).await?;
 
-    if let Some(parsed) = output_llama_response(res) {
-        match parsed.content {
-            Content::ToolCall(ref tool_call) => {
-                let func_name = tool_call.name.clone();
-                let arguments = tool_call.arguments.clone().unwrap();
-                let url = &arguments["url"];
-                if func_name == "get_webpage_text" {
-                    let res = get_webpage_text(&url).await?;
-                    println!("{:?}", res);
-                }
-            }
+    // if let Some(parsed) = output_llama_response(res) {
+    //     match parsed.content {
+    //         Content::ToolCall(ref tool_call) => {
+    //             let func_name = tool_call.name.clone();
+    //             let arguments = tool_call.arguments.clone().unwrap();
+    //             let url = &arguments["url"];
+    //             if func_name == "get_webpage_text" {
+    //                 let res = get_webpage_text(&url).await?;
+    //                 println!("{:?}", res);
+    //             }
+    //         }
 
-            _ => (),
-        }
+    //         _ => (),
+    //     }
 
-        return Ok(parsed);
-    }
+    //     return Ok(parsed);
+    // }
     Err(anyhow::Error::msg("parsing error"))
 }
