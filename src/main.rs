@@ -1,17 +1,29 @@
 use async_openai::types::Role;
 use autogen_rust::conversable_agent::*;
-// use autogen_rust::exec_python::*;
+use autogen_rust::exec_python::*;
 use autogen_rust::groupchat::GroupChat;
 use autogen_rust::llama_structs::*;
 use autogen_rust::llm_llama_local::*;
 // use autogen_rust::tool_call_actuators::*;
+use anyhow::{anyhow, Result};
 use autogen_rust::webscraper_hook::*;
 use regex::Regex;
 use std::sync::{Arc, Mutex};
 use tokio;
-use anyhow::{anyhow, Result};
+
+use std::io::Error;
+use std::process::Command;
+
+use rustpython::InterpreterConfig;
+use rustpython_vm as vm;
+use rustpython_vm::compiler::Mode;
+use vm::{
+    object::{PyObject, PyObjectRef, PyResult},
+    Interpreter,
+};
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     let system_prompt = r#"<|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools> {"type": "function", "function": {"name": "get_current_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"}, "format": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "The temperature unit to use. Infer this from the users location."}}, "required": ["location", "format"]}}} </tools> Use the following pydantic model json schema for each tool call you will make: {"properties": {"arguments": {"title": "Arguments", "type": "object"}, "name": {"title": "Name", "type": "string"}}, "required": ["arguments", "name"], "title": "FunctionCall", "type": "object"} For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
     <tool_call>
@@ -35,12 +47,24 @@ async fn main() {
     // match std::process::Command::new("/Users/jichen/miniconda3/bin/python")
 
     // let code_in_file = include_str!("search_paper.py");
-    // // let code = r#"print("hello")"#;
+    let code = "def is_prime(n):\n    if n <= 1:\n        return False\n    if n == 2:\n        return True\n    if n % 2 == 0:\n        return False\n    i = 3\n    while i * i <= n:\n        if n % i == 0:\n            return False\n        i += 2 \n    return True\n\nprime_numbers_below_100 = [num for num in range(2, 100) if is_prime(num)]\n\nprint(prime_numbers_below_100)";
 
-    // match run_python(&code_in_file) {
-    //     Ok(res) => (),
-    //     Err(res) => (),
-    // };
+    match run_python_capture(&code) {
+        Ok(res) => println!("{:?}", res),
+        Err(res) => println!("{:?}", res),
+    };
+    // let code = r#"
+
+    // graph = '''
+    // something is funny
+    // ''';
+
+    // def my_fun():
+    //   return(10)
+
+    // def _fun():
+    //   return(2)
+    // "#;
 
     let user_proxy_a = ConversableAgent::new("a");
     let user_proxy_b = ConversableAgent::new("b");
@@ -52,6 +76,5 @@ async fn main() {
         None,
     );
 
-
-    
+    Ok(())
 }

@@ -9,6 +9,50 @@ use vm::{
     Interpreter,
 };
 
+pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
+    let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
+    interpreter.enter(|vm| {
+        let scope = vm.new_scope_with_builtins();
+let my_scope      = scope.clone();
+        let code_with_redirect_and_output = format!(
+            "import io\nimport sys\noutput = io.StringIO()\nsys.stdout = output\n{}\ncaptured_output = output.getvalue()",
+            code,
+        );
+
+        let code_obj = vm
+            .compile(
+                &code_with_redirect_and_output,
+                vm::compiler::Mode::Exec,
+                "<embedded>".to_owned(),
+            )
+            .map_err(|err| format!("Compilation error: {}", err))?;
+
+        let result = vm.run_code_obj(code_obj, scope);
+        match result {
+            Ok(output) => {
+                let res = my_scope.globals.get_item("captured_output", vm).unwrap();
+
+                if let Some(py_str) = res.downcast_ref::<vm::builtins::PyStr>() {
+                    let value = py_str.as_str();
+                    Ok(value.to_string())
+                } else {
+                    Err("res is not a string".to_string())
+                }
+            }
+            Err(e) => {
+                let error_message = if let Some(args) = e.args().as_slice().first() {
+                    args.downcast_ref::<vm::builtins::PyStr>()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "Unknown error".to_string())
+                } else {
+                    "No error message available".to_string()
+                };
+                Err(format!("Code execution error message: {}", error_message))
+            }
+        }
+    })
+}
+
 pub fn run_python(code: &str) -> anyhow::Result<String, String> {
     let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
     interpreter.enter(|vm| {
@@ -19,6 +63,35 @@ pub fn run_python(code: &str) -> anyhow::Result<String, String> {
             .map_err(|err| format!("Compilation error: {}", err))?;
 
         let result = vm.run_code_obj(code_obj, scope);
+
+        match result {
+            Ok(output) => {
+                let output_str = output
+                    .downcast_ref::<vm::builtins::PyStr>()
+                    .ok_or_else(|| "".to_string())?
+                    .to_string();
+                Ok(format!("Code executed, output: {}", output_str))
+            }
+            Err(e) => {
+                let error_message = if let Some(args) = e.args().as_slice().first() {
+                    args.downcast_ref::<vm::builtins::PyStr>()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "Unknown error".to_string())
+                } else {
+                    "No error message available".to_string()
+                };
+                Err(format!("Code execution error message: {}", error_message))
+            }
+        }
+    })
+}
+
+pub fn run_python_string(code: &str) -> anyhow::Result<String, String> {
+    let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
+    interpreter.enter(|vm| {
+        let scope = vm.new_scope_with_builtins();
+
+        let result = vm.run_code_string(scope, code, "<...>".to_string());
 
         match result {
             Ok(output) => {
@@ -41,7 +114,6 @@ pub fn run_python(code: &str) -> anyhow::Result<String, String> {
         }
     })
 }
-
 
 pub fn run_python_vm(code: &str) {
     let settings = Settings::default();

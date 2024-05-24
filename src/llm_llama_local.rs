@@ -112,7 +112,8 @@ impl Message {
                 "tool_call: {}, arguments: {}",
                 tool_call.name,
                 tool_call
-                    .arguments.as_ref()
+                    .arguments
+                    .as_ref()
                     .unwrap()
                     .into_iter()
                     .map(|(arg, val)| format!("{:?}: {:?}", arg, val))

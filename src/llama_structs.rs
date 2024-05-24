@@ -1,7 +1,7 @@
+use crate::FUNCTON_CALL_SYSTEM_PROMPT;
 use async_openai::types::{CompletionUsage, CreateChatCompletionResponse, Role};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::FUNCTON_CALL_SYSTEM_PROMPT;
 
 use crate::{llm_llama_local::chat_inner_async, webscraper_hook::get_webpage_text};
 
