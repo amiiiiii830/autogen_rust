@@ -1,6 +1,7 @@
 use async_openai::types::{CompletionUsage, CreateChatCompletionResponse, Role};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::FUNCTON_CALL_SYSTEM_PROMPT;
 
 use crate::{llm_llama_local::chat_inner_async, webscraper_hook::get_webpage_text};
 
@@ -67,40 +68,7 @@ pub async fn fire_tool_call(
     // tool_call_obj: &str,
     user_prompt: &str,
 ) -> anyhow::Result<LlamaResponseMessage> {
-    let system_prompt = r#"<|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools> 
-    
-    The function `get_webpage_text` retrieves all text content from a given URL. For example, calling `get_webpage_text("https://example.com")` will fetch the text from Example.com.
-    
-    The function `search_bing` performs a search using Bing and returns the results. For example, `search_bing("latest AI research trends")` will return search results related to the latest trends in AI research. 
-    {
-        "name": "get_webpage_text",
-        "description": ""Retrieves all text content from a specified website URL.",
-        "parameters": {
-            "url": {
-                "type": "string",
-                "description": "The URL of the website from which to fetch the text content__"
-            }
-        },
-        "required": ["url"],
-        "type": "object"
-    }
-    
-    {
-        "name": "search_bing",
-        "description": "Conduct a search using the Bing search engine and return the results.",
-        "parameters": {
-            "query": {
-                "type": "string",
-                "description": "The search query to be executed on Bing__"
-            }
-        },
-        "required": ["query"],
-        "type": "object"
-    }
-    For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
-    <tool_call>
-    {"arguments": <args-dict>, "name": <function-name>}
-    </tool_call>"#.to_string();
+    let system_prompt = &FUNCTON_CALL_SYSTEM_PROMPT;
 
     // let content = match function.name.as_str() {
     //     "getWeather" => {
