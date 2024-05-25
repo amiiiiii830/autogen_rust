@@ -25,6 +25,7 @@ pub struct LlamaResponseMessage {
     pub usage: CompletionUsage,
 }
 
+
 fn extract_json_from_xml_like(xml_like_data: &str) -> Option<String> {
     let start_tag = "<tool_call>";
     let end_tag = "</tool_call>";

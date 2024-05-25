@@ -1,26 +1,11 @@
 use async_openai::types::Role;
 use autogen_rust::conversable_agent::*;
-use autogen_rust::exec_python::*;
-use autogen_rust::groupchat::GroupChat;
 use autogen_rust::llama_structs::*;
-use autogen_rust::llm_llama_local::*;
+use autogen_rust::message_store::*;
 // use autogen_rust::tool_call_actuators::*;
-use anyhow::{anyhow, Result};
-use autogen_rust::webscraper_hook::*;
-use regex::Regex;
-use std::sync::{Arc, Mutex};
+use anyhow::Result;
+use rusqlite::Connection;
 use tokio;
-
-use std::io::Error;
-use std::process::Command;
-
-use rustpython::InterpreterConfig;
-use rustpython_vm as vm;
-use rustpython_vm::compiler::Mode;
-use vm::{
-    object::{PyObject, PyObjectRef, PyResult},
-    Interpreter,
-};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,31 +39,67 @@ async fn main() -> Result<()> {
     //     Err(res) => println!("{:?}", res),
     // };
 
-    // let code = r#"
+    // let raw ="Here's a Python code block that calculates and prints all prime numbers below 100:\n\n```python\ndef is_prime(n):\n    if n <= 1:\n        return False\n    for i in range(2, int(n ** 0.5) + 1):\n        if n % i == 0:\n            return False\n    return True\n\nfor number in range(2, 100):\n    if is_prime(number):\n        print(number)\n```\nThis code will output all prime numbers below 100.";
 
-    // graph = '''
-    // something is funny
-    // ''';
+    // let code = extract_code(raw);
 
-    // def my_fun():
-    //   return(10)
+    // println!("{:?}", code);
 
-    // def _fun():
-    //   return(2)
-    // "#;
+    // let mut coding_agent = ConversableAgent::new("coding");
+    // let message = Message::new(
+    //     Some(Content::Text(
+    //         "create code to calculate prime numbers below 100".to_string(),
+    //     )),
+    //     Some("random".to_string()),
+    //     Some(Role::User),
+    //     None,
+    // );
 
-    let mut coding_agent = ConversableAgent::new("coding");
-    let message = Message::new(
-        Some(Content::Text(
-            "create code to calculate prime numbers below 100".to_string(),
-        )),
-        Some("random".to_string()),
-        Some(Role::User),
-        None,
-    );
+    // let code = coding_agent.start_coding(&message).await?;
+    // println!("{:?}", code);
+    let conn = Connection::open_in_memory()?;
 
-    let code = coding_agent.start_coding(&message).await?;
-    println!("{:?}", code);
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS GroupChat (
+            id INTEGER PRIMARY KEY,
+            agent_name TEXT NOT NULL,
+            message_content TEXT,
+            message_role TEXT,
+            message_context TEXT,
+            tokens_count INTEGER,
+            next_speaker TEXT
+        )",
+        [],
+    )?;
+
+    let messages = vec![
+        Message {
+            content: Some(Content::Text("Hello".to_string())),
+            name: Some("Agent1".to_string()),
+            role: Some(Role::User),
+        },
+        Message {
+            content: Some(Content::Text("How can I assist you?".to_string())),
+            name: Some("Agent2".to_string()),
+            role: Some(Role::Assistant),
+        },
+        Message {
+            content: Some(Content::ToolCall(ToolCall {
+                name: "search".to_string(),
+                arguments: Some(std::collections::HashMap::new()),
+            })),
+            name: Some("Agent1".to_string()),
+            role: Some(Role::Tool),
+        },
+    ];
+
+    for message in messages {
+        save_message(&conn, "Agent1".to_string(), message.clone(), "Agent2".to_string())?;
+    }
+    let messages = retrieve_messages(&conn, "Agent1".to_string())?;
+    for message in messages {
+        println!("{:?}", message);
+    }
 
     Ok(())
 }

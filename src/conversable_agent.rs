@@ -3,9 +3,7 @@ use crate::exec_python::*;
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
 use crate::CODE_PYTHON_SYSTEM_MESSAGE;
-use anyhow::anyhow;
 use async_openai::types::Role;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -18,7 +16,6 @@ pub struct Message {
     pub content: Option<Content>,
     pub name: Option<String>,
     pub role: Option<Role>,
-    pub context: Option<Context>,
 }
 
 impl Default for Message {
@@ -27,7 +24,6 @@ impl Default for Message {
             content: None,
             name: None,
             role: None,
-            context: None,
         }
     }
 }
@@ -37,13 +33,11 @@ impl Message {
         content: Option<Content>,
         name: Option<String>,
         role: Option<Role>,
-        context: Option<Context>,
     ) -> Self {
         Message {
             content,
             name,
             role: role.or(Some(Role::Assistant)), // Set default role to Assistant if None is provided
-            context,
         }
     }
 }
@@ -157,7 +151,6 @@ impl ConversableAgent {
             content: Some(output.content),
             name: None,
             role: None,
-            context: None,
         })
     }
 
@@ -189,14 +182,12 @@ impl ConversableAgent {
             Message {
                 role: Some(Role::System),
                 name: None,
-                context: None,
-                content: Some(Content::Text(self.system_message.clone())),
+                    content: Some(Content::Text(self.system_message.clone())),
             },
             Message {
                 role: Some(Role::User),
                 name: None,
-                context: None,
-                content: Some(Content::Text(user_prompt)),
+                    content: Some(Content::Text(user_prompt)),
             },
         ];
 
@@ -211,11 +202,11 @@ impl ConversableAgent {
     }
 
     pub async fn extract_and_run_python(&self, in_message: &Message) -> anyhow::Result<String> {
-        let raw = in_message.content_to_string()?;
+        let raw = in_message.content_to_string().expect("failed to convert message to String");
 
-        let code = extract_code(&raw, false);
+        let code = extract_code(&raw);
 
-        match run_python_capture(code).await {
+        match run_python_capture(&code) {
             Ok(res) => todo!(),
 
             Err(e) => todo!(),

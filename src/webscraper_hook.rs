@@ -1,6 +1,6 @@
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
-use reqwest::{header::AUTHORIZATION, Client};
-use serde::{Deserialize, Serialize};
+use reqwest::Client;
+use serde::Deserialize;
 
 pub async fn get_webpage_text(url: String) -> anyhow::Result<String> {
     let client = Client::builder().build()?;

@@ -6,6 +6,7 @@ pub mod groupchat;
 pub mod llama_structs;
 pub mod llm_llama_local;
 pub mod webscraper_hook;
+pub mod message_store;
 // pub mod tool_call_actuators;
 use lazy_static::lazy_static;
 use std::sync::{Arc, Mutex};

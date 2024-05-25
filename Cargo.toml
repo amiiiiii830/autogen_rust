@@ -25,3 +25,5 @@ rustpython-stdlib = "0.3.1"
 regex = "1.10.4"
 futures = "0.3.30"
 lazy_static = "1.4.0"
+rusqlite = { version = "0.28", features = ["bundled"] }
+libsqlite3-sys = { version = "0.25", features = ["min_sqlite_version_3_7_16", "bundled"] }
