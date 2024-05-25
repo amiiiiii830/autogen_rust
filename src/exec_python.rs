@@ -8,12 +8,12 @@ use vm::{
     object::{PyObject, PyObjectRef, PyResult},
     Interpreter,
 };
+use regex::Regex;
 
 pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
     let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
     interpreter.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
-let my_scope      = scope.clone();
         let code_with_redirect_and_output = format!(
             "import io\nimport sys\noutput = io.StringIO()\nsys.stdout = output\n{}\ncaptured_output = output.getvalue()",
             code,
@@ -27,18 +27,18 @@ let my_scope      = scope.clone();
             )
             .map_err(|err| format!("Compilation error: {}", err))?;
 
-        let result = vm.run_code_obj(code_obj, scope);
-        match result {
-            Ok(output) => {
-                let res = my_scope.globals.get_item("captured_output", vm).unwrap();
+       match  vm.run_code_obj(code_obj, scope.clone())
+          {
+            Ok(_) => {
+                match scope.globals.get_item("captured_output", vm) {
+                    Ok(res) => match res.downcast_ref::<vm::builtins::PyStr>() {
+                        Some(py_str) =>                   Ok(py_str.as_str().to_string()),
+                        None=>                     Err("res is not a string".to_string())
+                    },
+                Err(_) => Err("error getting captured_output".to_string()),
 
-                if let Some(py_str) = res.downcast_ref::<vm::builtins::PyStr>() {
-                    let value = py_str.as_str();
-                    Ok(value.to_string())
-                } else {
-                    Err("res is not a string".to_string())
                 }
-            }
+            },
             Err(e) => {
                 let error_message = if let Some(args) = e.args().as_slice().first() {
                     args.downcast_ref::<vm::builtins::PyStr>()
@@ -152,6 +152,33 @@ pub fn run_python_func(func_path: &str) -> anyhow::Result<String, String> {
 
         Err(e) => Err(format!("Failed to execute command: {}", e)),
     }
+}
+
+
+
+pub fn extract_code(text: &str, detect_single_line_code: bool) -> Vec<(Option<String>, String)> {
+    // Adjust regex pattern to handle both Unix and Windows line endings and optional language specifier
+    let multi_line_pattern = r"```[ \t]*(\w+)?[ \t]*\r?\n(.*?)\r?\n[ \t]*```";
+    let single_line_pattern = r"`([^`]+)`";
+    let mut results: Vec<(Option<String>, String)> = Vec::new();
+
+    let multi_line_regex = Regex::new(multi_line_pattern).unwrap();
+    for cap in multi_line_regex.captures_iter(text) {
+        let language = cap.get(1).map_or(None, |m| Some(m.as_str().trim().to_string()));
+        let code = cap.get(2).unwrap().as_str().trim().to_string();
+        results.push((language.clone(), code.clone()));
+        // println!("Matched multi-line code block: Language: {:?}, Code: {}", language, code);
+    }
+
+    if detect_single_line_code {
+        let single_line_regex = Regex::new(single_line_pattern).unwrap();
+        for cap in single_line_regex.captures_iter(text) {
+            results.push((None, cap.get(1).unwrap().as_str().trim().to_string()));
+            // println!("Matched single-line code: {}", cap.get(1).unwrap().as_str().trim());
+        }
+    }
+
+    results
 }
 
 // export DYLD_LIBRARY_PATH=/Users/jichen/miniconda3/lib:$DYLD_LIBRARY_PATH

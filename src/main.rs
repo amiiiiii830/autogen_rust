@@ -47,12 +47,13 @@ async fn main() -> Result<()> {
     // match std::process::Command::new("/Users/jichen/miniconda3/bin/python")
 
     // let code_in_file = include_str!("search_paper.py");
-    let code = "def is_prime(n):\n    if n <= 1:\n        return False\n    if n == 2:\n        return True\n    if n % 2 == 0:\n        return False\n    i = 3\n    while i * i <= n:\n        if n % i == 0:\n            return False\n        i += 2 \n    return True\n\nprime_numbers_below_100 = [num for num in range(2, 100) if is_prime(num)]\n\nprint(prime_numbers_below_100)";
+    // let code = "def is_prime(n):\n    if n <= 1:\n        return False\n    if n == 2:\n        return True\n    if n % 2 == 0:\n        return False\n    i = 3\n    while i * i <= n:\n        if n % i == 0:\n            return False\n        i += 2 \n    return True\n\nprime_numbers_below_100 = [num for num in range(2, 100) if is_prime(num)]\n\nprint(prime_numbers_below_100)";
 
-    match run_python_capture(&code) {
-        Ok(res) => println!("{:?}", res),
-        Err(res) => println!("{:?}", res),
-    };
+    // match run_python_capture(&code) {
+    //     Ok(res) => println!("{:?}", res),
+    //     Err(res) => println!("{:?}", res),
+    // };
+
     // let code = r#"
 
     // graph = '''
@@ -66,15 +67,18 @@ async fn main() -> Result<()> {
     //   return(2)
     // "#;
 
-    let user_proxy_a = ConversableAgent::new("a");
-    let user_proxy_b = ConversableAgent::new("b");
-
+    let mut coding_agent = ConversableAgent::new("coding");
     let message = Message::new(
-        Some(Content::Text("hello".to_string())),
+        Some(Content::Text(
+            "create code to calculate prime numbers below 100".to_string(),
+        )),
         Some("random".to_string()),
         Some(Role::User),
         None,
     );
+
+    let code = coding_agent.start_coding(&message).await?;
+    println!("{:?}", code);
 
     Ok(())
 }

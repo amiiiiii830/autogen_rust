@@ -1,6 +1,8 @@
 // use crate::exec_python::run_python;
+use crate::exec_python::*;
 use crate::llama_structs::*;
-use crate::llm_llama_local::chat_inner_async_llama;
+use crate::llm_llama_local::*;
+use crate::CODE_PYTHON_SYSTEM_MESSAGE;
 use anyhow::anyhow;
 use async_openai::types::Role;
 use regex::Regex;
@@ -173,6 +175,51 @@ impl ConversableAgent {
         //     Ok(res) => res,
         //     Err(res) => res,
         // }
+    }
+
+    pub async fn start_coding(&mut self, user_message: &Message) -> anyhow::Result<String> {
+        self.update_system_message(CODE_PYTHON_SYSTEM_MESSAGE.clone());
+
+        let user_prompt = format!(
+            "Here is the task for you: {:?}",
+            user_message.content_to_string()
+        );
+
+        let messages = vec![
+            Message {
+                role: Some(Role::System),
+                name: None,
+                context: None,
+                content: Some(Content::Text(self.system_message.clone())),
+            },
+            Message {
+                role: Some(Role::User),
+                name: None,
+                context: None,
+                content: Some(Content::Text(user_prompt)),
+            },
+        ];
+
+        let code = chat_inner_async_llama(messages, 1000u16).await?;
+
+        let content = match code.content {
+            Content::Text(c) => c,
+            Content::ToolCall(_) => panic!(),
+        };
+
+        Ok(content)
+    }
+
+    pub async fn extract_and_run_python(&self, in_message: &Message) -> anyhow::Result<String> {
+        let raw = in_message.content_to_string()?;
+
+        let code = extract_code(&raw, false);
+
+        match run_python_capture(code).await {
+            Ok(res) => todo!(),
+
+            Err(e) => todo!(),
+        }
     }
 
     // pub async fn execute_tool_call(&self, call: &ToolCall) -> anyhow::Result<String, String> {
