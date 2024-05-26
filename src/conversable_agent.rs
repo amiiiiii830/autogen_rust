@@ -2,13 +2,15 @@
 use crate::exec_python::*;
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
-use crate::CODE_PYTHON_SYSTEM_MESSAGE;
+use crate::message_store::*;
+// use crate::CODE_PYTHON_SYSTEM_MESSAGE;
+use anyhow;
 use async_openai::types::Role;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-
 type Context = HashMap<String, String>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -29,11 +31,7 @@ impl Default for Message {
 }
 
 impl Message {
-    pub fn new(
-        content: Option<Content>,
-        name: Option<String>,
-        role: Option<Role>,
-    ) -> Self {
+    pub fn new(content: Option<Content>, name: Option<String>, role: Option<Role>) -> Self {
         Message {
             content,
             name,
@@ -46,37 +44,25 @@ pub trait Agent {
     fn name(&self) -> String;
 
     fn description(&self) -> String;
-
-    fn system_message(&self) -> String;
-
-    fn set_description(&mut self, description: String);
 }
 
 pub struct ConversableAgent {
     pub name: String,
-    pub system_message: String,
     pub max_consecutive_auto_reply: i32,
     pub human_input_mode: String,
-    pub tool_calls_meta: String,
-    pub in_tool_call: bool,
     pub llm_config: Option<Value>,
     pub default_auto_reply: Value,
     pub description: String,
-    pub chat_messages: Option<Vec<Message>>,
 }
 impl Clone for ConversableAgent {
     fn clone(&self) -> Self {
         ConversableAgent {
             name: self.name.clone(),
-            system_message: self.system_message.clone(),
             max_consecutive_auto_reply: self.max_consecutive_auto_reply,
             human_input_mode: self.human_input_mode.clone(),
-            tool_calls_meta: self.tool_calls_meta.clone(),
-            in_tool_call: self.in_tool_call.clone(),
             llm_config: self.llm_config.clone(),
             default_auto_reply: self.default_auto_reply.clone(),
             description: self.description.clone(),
-            chat_messages: self.chat_messages.clone(),
         }
     }
 }
@@ -88,31 +74,34 @@ impl Agent for ConversableAgent {
     fn description(&self) -> String {
         self.description.clone()
     }
-
-    fn system_message(&self) -> String {
-        self.system_message.clone()
-    }
-
-    fn set_description(&mut self, description: String) {
-        self.description = description;
-    }
 }
 
 impl ConversableAgent {
     pub fn new(name: &str) -> Self {
         ConversableAgent {
             name: name.to_string(),
-            system_message: String::from("you act as user proxy"),
             max_consecutive_auto_reply: 10,
             human_input_mode: String::from("ALWAYS"),
-            tool_calls_meta: String::from("fake functions"),
-            in_tool_call: false,
             llm_config: None,
             default_auto_reply: json!("this is user_proxy"),
             description: String::from("agent acting as user_proxy"),
-            chat_messages: Some(vec![]),
         }
     }
+
+    pub async fn system_prompt(&self) -> Result<String, rusqlite::Error> {
+        let conn = Connection::open_in_memory().expect("error openning sqlite connection");
+
+        get_system_prompt_db(&conn, &self.name).await
+    }
+
+    // pub async fn tool_calls_meta() -> String {}
+    // pub async fn in_tool_call() -> bool {}
+    pub async fn message_history(&self) -> Result<Vec<Message>, rusqlite::Error> {
+        let conn = Connection::open_in_memory().expect("error openning sqlite connectoins");
+
+        retrieve_messages(&conn, &self.name).await
+    }
+
     pub async fn send(
         &self,
         message: Message,
@@ -154,8 +143,11 @@ impl ConversableAgent {
         })
     }
 
-    pub async fn update_system_message(&mut self, system_message: String) {
-        self.system_message = system_message.to_string();
+    pub async fn update_system_prompt(&mut self, new_prompt: &str) -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+
+        let _ = update_system_prompt_db(&conn, &self.name, new_prompt).await;
+        Ok(())
     }
 
     pub fn get_human_input(&self) -> String {
@@ -170,9 +162,10 @@ impl ConversableAgent {
         // }
     }
 
-    pub async fn start_coding(&mut self, user_message: &Message) -> anyhow::Result<String> {
-        self.update_system_message(CODE_PYTHON_SYSTEM_MESSAGE.clone());
+    pub async fn start_coding(&self, user_message: &Message) -> anyhow::Result<String> {
+        let conn = Connection::open_in_memory()?;
 
+        let system_prompt = self.system_prompt().await?;
         let user_prompt = format!(
             "Here is the task for you: {:?}",
             user_message.content_to_string()
@@ -182,12 +175,12 @@ impl ConversableAgent {
             Message {
                 role: Some(Role::System),
                 name: None,
-                    content: Some(Content::Text(self.system_message.clone())),
+                content: Some(Content::Text(system_prompt)),
             },
             Message {
                 role: Some(Role::User),
                 name: None,
-                    content: Some(Content::Text(user_prompt)),
+                content: Some(Content::Text(user_prompt)),
             },
         ];
 
@@ -202,7 +195,9 @@ impl ConversableAgent {
     }
 
     pub async fn extract_and_run_python(&self, in_message: &Message) -> anyhow::Result<String> {
-        let raw = in_message.content_to_string().expect("failed to convert message to String");
+        let raw = in_message
+            .content_to_string()
+            .expect("failed to convert message to String");
 
         let code = extract_code(&raw);
 
@@ -226,13 +221,14 @@ impl ConversableAgent {
     //     }
     // }
 
-    pub fn set_description(&mut self, description: String) {
-        self.description = description;
-    }
+    pub async fn last_message(&self) -> Option<Message> {
+        let messages = self
+            .message_history()
+            .await
+            .expect("failed to get message history");
 
-    pub fn last_message(&self) -> Option<Message> {
-        match &self.chat_messages {
-            Some(messages) => messages.last().cloned(),
+        match messages.last() {
+            Some(msg) => Some(msg.clone()),
             None => None,
         }
     }

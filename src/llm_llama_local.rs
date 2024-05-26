@@ -18,7 +18,6 @@ use async_openai::{
     },
     Client as OpenAIClient,
 };
-use dotenv;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
 use secrecy::Secret;
 use serde::Deserialize;

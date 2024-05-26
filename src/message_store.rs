@@ -3,7 +3,6 @@ use crate::llama_structs::*;
 use async_openai::types::Role;
 use rusqlite::{params, Connection, Result};
 
-
 trait RoleToString {
     fn to_string(&self) -> String;
 }
@@ -98,11 +97,11 @@ impl From<Message> for NaiveMessage {
     }
 }
 
-pub fn save_message(
+pub async fn save_message(
     conn: &Connection,
-    agent_name: String,
+    agent_name: &str,
     message: Message,
-    next_speaker: String,
+    next_speaker: &str,
 ) -> Result<()> {
     let tokens_count = message
         .content_to_string()
@@ -116,13 +115,85 @@ pub fn save_message(
     Ok(())
 }
 
-pub fn retrieve_messages(conn: &Connection, agent_name: String) -> Result<Vec<Message>> {
+pub struct AgentStore {
+    pub agent_name: String,
+    pub current_system_prompt: String,
+    pub tools_map_meta: String,
+}
+
+pub async fn get_system_prompt_db(conn: &Connection, agent_name: &str) -> Result<String> {
+    let mut stmt =
+        conn.prepare("SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1")?;
+    let mut rows = stmt.query(params![agent_name])?;
+
+    if let Some(row) = rows.next()? {
+        let prompt: String = row.get(0)?;
+        Ok(prompt)
+    } else {
+        Err(rusqlite::Error::QueryReturnedNoRows)
+    }
+}
+
+pub async fn update_system_prompt_db(
+    conn: &Connection,
+    agent_name: &str,
+    new_prompt: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE AgentStore SET current_system_prompt = ?1 WHERE agent_name = ?2",
+        params![new_prompt, agent_name],
+    )?;
+    Ok(())
+}
+
+pub async fn register_agent(
+    conn: &Connection,
+    agent_name: &str,
+    system_prompt: &str,
+    tools_map_meta: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO AgentStore (agent_name, current_system_prompt, tools_map_meta) VALUES (?1, ?2, ?3)",
+        params![agent_name, system_prompt, tools_map_meta],
+    )?;
+    Ok(())
+}
+
+pub async fn create_agent_store_table(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS AgentStore (
+            agent_name TEXT PRIMARY KEY,
+            current_system_prompt TEXT NOT NULL,
+            tools_map_meta TEXT NOT NULL
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
+pub async fn create_message_store_table(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS GroupChat (
+            id INTEGER PRIMARY KEY,
+            agent_name TEXT NOT NULL,
+            message_content TEXT,
+            message_role TEXT,
+            message_context TEXT,
+            tokens_count INTEGER,
+            next_speaker TEXT
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
+pub async fn retrieve_messages(conn: &Connection, agent_name: &str) -> Result<Vec<Message>> {
     let mut stmt = conn.prepare("SELECT message_content, message_role, message_context FROM GroupChat WHERE agent_name = ?1")?;
     let rows = stmt.query_map(params![agent_name], |row| {
         Ok(Message {
             content: Some(Content::Text(row.get::<_, String>(0)?)), // Specify type as String
             role: Some(Role::from_str(&row.get::<_, String>(1)?)), // Specify type as String and use from_str
-            name: Some(agent_name.clone()),
+            name: Some(agent_name.to_owned()),
         })
     })?;
 

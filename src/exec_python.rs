@@ -124,7 +124,7 @@ pub fn run_python_vm(code: &str) {
         ));
     })
     .enter(|vm| {
-        vm.run_code_string(vm.new_scope_with_builtins(), code, "<...>".to_owned());
+        let _ = vm.run_code_string(vm.new_scope_with_builtins(), code, "<...>".to_owned());
     });
 }
 
