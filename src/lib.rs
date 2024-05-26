@@ -2,11 +2,11 @@
 // pub mod groupchat;
 pub mod conversable_agent;
 pub mod exec_python;
-pub mod groupchat;
+// pub mod groupchat;
 pub mod llama_structs;
 pub mod llm_llama_local;
-pub mod webscraper_hook;
 pub mod message_store;
+pub mod webscraper_hook;
 // pub mod tool_call_actuators;
 use lazy_static::lazy_static;
 use std::sync::{Arc, Mutex};
@@ -14,6 +14,15 @@ use std::sync::{Arc, Mutex};
 type FormatterFn = Box<dyn Fn(&[&str]) -> String + Send + Sync>;
 
 lazy_static! {
+    pub static ref ROUTER_AGENT_SYSTEM_PROMPT: String = r#"
+    You are a helpful AI assistant acting as a discussion moderator or speaker selector. You will read descriptions of several agents and their abilities, examine the task instruction and the current result, and decide whether the task is done or needs further work. Use the following format to reply:
+    {
+        "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
+        "next_speaker": "some_speaker" or empty in case "TERMINATE" in the previous field
+    }
+    "#.to_string();
+    // Follow these guidelines:"#.to_string();
+
 pub static ref CODE_PYTHON_SYSTEM_MESSAGE: String = r#"`You are a helpful AI assistant.
 Provide clean, executable Python code blocks to solve tasks, without adding explanatory sentences. Follow these guidelines:
 1. Use Python code blocks to perform tasks such as collecting information, executing operations, or outputting results. Ensure the code is ready to execute without requiring user modifications.

@@ -94,9 +94,9 @@ async fn main() -> Result<()> {
     ];
 
     for message in messages {
-        save_message(&conn, "Agent1", message.clone(), "Agent2").await?;
+        save_message(conn, "Agent1", message.clone(), "Agent2").await?;
     }
-    let messages = retrieve_messages(&conn, "Agent1").await?;
+    let messages = retrieve_messages(conn, "Agent1").await?;
     for message in messages {
         println!("{:?}", message);
     }
