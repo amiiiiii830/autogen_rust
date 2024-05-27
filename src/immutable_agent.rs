@@ -1,9 +1,15 @@
-// use crate::exec_python::run_python;
+// use crate::exec_python::run_python_capture;
 // use crate::exec_python::*;
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
 use crate::message_store::*;
-use crate::ROUTER_AGENT_SYSTEM_PROMPT;
+use crate::{
+    ROUTER_AGENT_SYSTEM_PROMPT,
+    IS_TERMINATION_SYSTEM_PROMPT,
+    CODE_PYTHON_SYSTEM_MESSAGE,
+    ITERATE_CODING_FAIL_TEMPLATE,
+    ITERATE_CODING_SUCCESS_TEMPLATE,
+};
 use anyhow;
 use async_openai::types::Role;
 use rusqlite::Connection;
@@ -11,6 +17,22 @@ use serde::{ Deserialize, Serialize };
 use serde_json::{ Value };
 use std::collections::{ HashMap };
 use regex::Regex;
+
+pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
+    todo!()
+}
+pub fn extract_code(text: &str) -> String {
+    let multi_line_pattern = r"```python(.*?)```";
+    let mut program = String::new();
+
+    let multi_line_regex = Regex::new(multi_line_pattern).unwrap();
+    for cap in multi_line_regex.captures_iter(text) {
+        let code = cap.get(1).unwrap().as_str().trim().to_string();
+        program.push_str(&code);
+    }
+
+    program
+}
 
 pub fn parse_next_speaker(input: &str) -> (String, String) {
     let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
@@ -35,6 +57,31 @@ pub fn parse_next_speaker(input: &str) -> (String, String) {
         .map_or(String::new(), |m| m.as_str().to_string());
 
     (continue_to_work_or_end, next_speaker)
+}
+
+pub fn parse_result_and_key_points(input: &str) -> (bool, String) {
+    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
+    let json_str = json_regex
+        .captures(input)
+        .and_then(|cap| cap.get(0))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let continue_to_work_or_end_regex = Regex::new(
+        r#""continue_to_work_or_end":\s*"([^"]*)""#
+    ).unwrap();
+    let next_speaker_regex = Regex::new(r#""key_points":\s*"([^"]*)""#).unwrap();
+
+    let continue_to_work_or_end = continue_to_work_or_end_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let key_points = next_speaker_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    (&continue_to_work_or_end == "TERMINATE", key_points)
 }
 
 type Context = HashMap<String, String>;
@@ -99,10 +146,6 @@ impl ImmutableAgent {
             tools_map_meta: tools_map_meta.to_string(),
             description: "router agent".to_string(),
         }
-    }
-
-    pub fn _is_termination(&self, content: &str) -> bool {
-        content.contains("TERMINATE")
     }
 
     pub async fn send(&self, message: Message, conn: &Connection, next_speaker: Option<&str>) {
@@ -217,11 +260,55 @@ impl ImmutableAgent {
             }
         }
     }
+    pub async fn _is_termination(
+        &self,
+        current_text_result: &str,
+        instruction: &str,
+        conn: &Connection
+    ) -> (bool, String) {
+        let user_prompt = format!(
+            "Given the task: {:?}, examine current result: {}, please decide whether the task is done or not",
+            instruction,
+            current_text_result
+        );
+
+        let messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(IS_TERMINATION_SYSTEM_PROMPT.to_string()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(user_prompt),
+            }
+        ];
+
+        let raw_reply = chat_inner_async_llama(messages, 300).await.expect(
+            "llm generation failure"
+        );
+
+        let (terminate_or_not, key_points) = parse_result_and_key_points(
+            &raw_reply.content_to_string()
+        );
+
+        let result_message = Message {
+            name: None,
+            content: Content::Text(key_points.clone()),
+            role: Role::Assistant,
+        };
+        if terminate_or_not {
+            let _ = save_message(conn, &self.name, result_message, "user_proxy").await;
+        }
+
+        (terminate_or_not, key_points)
+    }
 
     pub fn execute_code_blocks(&self, code_blocks: &str) -> String {
         todo!()
-        // match run_python(code_blocks) {
-        //     Ok(res) => res,
+        // match run_python_capture(code_blocks) {
+        //     Ok(success_result_text) => res,
         //     Err(res) => res,
         // }
     }
@@ -230,7 +317,7 @@ impl ImmutableAgent {
         &self,
         user_message: &Message,
         conn: &Connection
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<()> {
         let user_prompt = format!(
             "Here is the task for you: {:?}",
             user_message.content_to_string()
@@ -240,7 +327,7 @@ impl ImmutableAgent {
             Message {
                 role: Role::System,
                 name: None,
-                content: Content::Text(self.system_prompt.clone()),
+                content: Content::Text(CODE_PYTHON_SYSTEM_MESSAGE.to_string()),
             },
             Message {
                 role: Role::User,
@@ -248,51 +335,318 @@ impl ImmutableAgent {
                 content: Content::Text(user_prompt),
             }
         ];
+        let mut message_vec = messages.clone();
 
-        let code = chat_inner_async_llama(messages, 1000u16).await?;
+        let output = chat_inner_async_llama(messages, 1000u16).await?;
 
-        let content = match code.content {
-            Content::Text(c) => c,
-            Content::ToolCall(_) => panic!(),
-        };
+        match &output.content {
+            Content::Text(_out) => {
+                let code = extract_code(_out);
 
-        Ok(content)
+                match run_python_capture(&code) {
+                    Ok(success_result_text) => {
+                        let (terminate_or_not, key_points) = self._is_termination(
+                            &success_result_text,
+                            &user_prompt,
+                            conn
+                        ).await;
+
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(key_points.clone()),
+                            role: Role::Assistant,
+                        };
+                        if terminate_or_not {
+                            let _ = save_message(
+                                conn,
+                                &self.name,
+                                result_message.clone(),
+                                "user_proxy"
+                            ).await;
+                        } else {
+                            message_vec.push(result_message);
+                            return Ok(message_vec);
+                        }
+                    }
+                    Err(res) => {
+                        let formatter = ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap();
+
+                        let wrapped_fail_result = formatter(res);
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(wrapped_fail_result),
+                            role: Role::Assistant,
+                        };
+
+                        message_vec.push(result_message);
+
+                        for i in 1..10 {
+                            message_vec = self.iterate_coding(&message_vec.clone(), conn).await;
+                        }
+                    }
+                }
+            }
+            Content::ToolCall(call) => {
+                // let func = call.name;
+                // let args = call.arguments.unwrap_or_default();
+                // Execute the tool call function
+                // func(args);
+            }
+        }
+
+        Ok(())
     }
 
-    pub async fn iterate_coding(
+    pub async fn iterate_coding_error_case(
         &self,
         message_history: &Vec<Message>,
+        error_msg: &str,
         conn: &Connection
-    ) -> anyhow::Result<String> {
-        // need to wrap the code and error msgs in template
-        let user_prompt = format!(
-            "Here is the task for you: {:?}",
-            message_history.last().unwrap().content_to_string()
-        );
+    ) -> (bool, String, Vec<Message>) {
+        let mut message_vec = message_history.clone();
+        let formatter = ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap();
 
-        let messages = vec![Message {
-            role: Role::User,
+        let wrapped_fail_result = formatter(&[error_msg]);
+        let result_message = Message {
             name: None,
-            content: Content::Text(user_prompt),
-        }];
-
-        let code = chat_inner_async_llama(messages, 1000u16).await?;
-
-        let content = match code.content {
-            Content::Text(c) => c,
-            Content::ToolCall(_) => panic!(),
+            content: Content::Text(wrapped_fail_result),
+            role: Role::User,
         };
 
-        Ok(content)
+        message_vec.push(result_message);
+
+        let output = chat_inner_async_llama(message_vec, 1000u16).await?;
+
+        match &output.content {
+            Content::Text(_out) => {
+                let code = extract_code(_out);
+
+                match run_python_capture(&code) {
+                    Ok(success_result_text) => {
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(success_result_text.clone()),
+                            role: Role::Assistant,
+                        };
+                        message_vec.push(result_message);
+                        (true, success_result_text, message_vec)
+                    }
+                    Err(error_msg) => {
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(error_msg.clone()),
+                            role: Role::Assistant,
+                        };
+                        message_vec.push(result_message);
+                        (false, error_msg, message_vec)
+                    }
+                }
+            }
+            Content::ToolCall(call) => panic!(),
+        }
+    }
+    pub async fn iterate_coding_success_case(
+        &self,
+        message_history: &Vec<Message>,
+        success_result_text: &str,
+        conn: &Connection
+    ) -> (bool, String, Vec<Message>) {
+        let mut message_vec = message_history.clone();
+        let formatter = ITERATE_CODING_SUCCESS_TEMPLATE.lock().unwrap();
+
+        let result_message = Message {
+            name: None,
+            content: Content::Text(formatter(&[success_result_text])),
+            role: Role::User,
+        };
+
+        message_vec.push(result_message);
+
+        let output = chat_inner_async_llama(message_vec, 1000u16).await.expect(
+            "error LLM generation"
+        );
+
+        match &output.content {
+            Content::Text(_out) => {
+                let code = extract_code(_out);
+
+                match run_python_capture(&code) {
+                    Ok(success_result_text) => {
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(success_result_text.clone()),
+                            role: Role::Assistant,
+                        };
+                        message_vec.push(result_message);
+                        (true, success_result_text, message_vec)
+                    }
+                    Err(error_msg) => {
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(error_msg.clone()),
+                            role: Role::Assistant,
+                        };
+                        message_vec.push(result_message);
+                        (false, error_msg, message_vec)
+                    }
+                }
+            }
+            Content::ToolCall(call) => panic!(),
+        }
+    }
+    pub async fn iterate_coding_error_case_copy(
+        &self,
+        message_history: &Vec<Message>,
+        error_msg: &str,
+        conn: &Connection
+    ) -> (bool, String, Vec<Message>) {
+        let mut message_vec = message_history.clone();
+        let formatter = ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap();
+
+        let wrapped_fail_result = formatter(&[error_msg]);
+        let result_message = Message {
+            name: None,
+            content: Content::Text(wrapped_fail_result),
+            role: Role::User,
+        };
+
+        message_vec.push(result_message);
+
+        let output = chat_inner_async_llama(message_vec, 1000u16).await?;
+
+        match &output.content {
+            Content::Text(_out) => {
+                let code = extract_code(_out);
+
+                match run_python_capture(&code) {
+                    Ok(success_result_text) => {
+                        let (terminate_or_not, key_points) = self._is_termination(
+                            &success_result_text,
+                            &instruction,
+                            conn
+                        ).await;
+
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(key_points.clone()),
+                            role: Role::Assistant,
+                        };
+                        if terminate_or_not {
+                            let _ = save_message(
+                                conn,
+                                &self.name,
+                                result_message.clone(),
+                                "user_proxy"
+                            ).await;
+                        } else {
+                            message_vec.push(result_message);
+                            return Ok(message_vec);
+                        }
+                    }
+                    Err(error_msg) => {
+                        let message_vec = self.iterate_coding_error_case(
+                            message_history,
+                            &error_msg,
+                            conn
+                        ).await;
+
+                        for i in 1..10 {
+                            message_vec = self.iterate_coding(&message_vec.clone(), conn).await;
+                        }
+                    }
+                }
+            }
+            Content::ToolCall(call) => {
+                // let func = call.name;
+                // let args = call.arguments.unwrap_or_default();
+                // Execute the tool call function
+                // func(args);
+            }
+        }
+        Ok(message_vec)
+    }
+    pub async fn iterate_coding_success(
+        &self,
+        message_history: &Vec<Message>,
+        code: &str,
+        success_run_result: &str,
+        conn: &Connection
+    ) -> anyhow::Result<Vec<Message>> {
+        let mut message_vec = message_history.clone();
+        let formatter = ITERATE_CODING_SUCCESS_TEMPLATE.lock().unwrap();
+
+        let result_message = Message {
+            name: None,
+            content: Content::Text(formatter(&[code, success_run_result])),
+            role: Role::User,
+        };
+
+        message_vec.push(result_message);
+
+        let output = chat_inner_async_llama(message_vec, 1000u16).await?;
+
+        match &output.content {
+            Content::Text(_out) => {
+                let code = extract_code(_out);
+
+                match run_python_capture(code) {
+                    Ok(success_result_text) => {
+                        let (terminate_or_not, key_points) = self._is_termination(
+                            res,
+                            &user_prompt,
+                            conn
+                        ).await;
+
+                        let result_message = Message {
+                            name: None,
+                            content: Content::Text(key_points.clone()),
+                            role: Role::Assistant,
+                        };
+                        if terminate_or_not {
+                            let _ = save_message(
+                                conn,
+                                &self.name,
+                                result_message.clone(),
+                                "user_proxy"
+                            ).await;
+                        } else {
+                            message_vec.push(result_message);
+                            return Ok(message_vec);
+                        }
+                    }
+                    Err(res) => {
+                        let message_vec = self.iterate_coding_error_case(
+                            message_history,
+                            error_msg,
+                            conn
+                        ).await;
+
+                        for i in 1..10 {
+                            message_vec = self.iterate_coding(&message_vec.clone(), conn).await;
+                        }
+                    }
+                }
+            }
+            Content::ToolCall(call) => {
+                // let func = call.name;
+                // let args = call.arguments.unwrap_or_default();
+                // Execute the tool call function
+                // func(args);
+            }
+        }
+        Ok(message_vec)
     }
 
-    pub async fn extract_and_run_python(&self, in_message: &Message) -> anyhow::Result<String> {
+    pub async fn extract_and_run_python_capture(
+        &self,
+        in_message: &Message
+    ) -> anyhow::Result<String> {
         let raw = in_message.content_to_string();
 
         // let code = extract_code(&raw);
 
-        // match run_python_capture(&code) {
-        //     Ok(res) => Ok(res),
+        // match run_python_capture_capture(&code) {
+        //     Ok(success_result_text) => Ok(success_result_text),
         //     Err(e) => Err(anyhow::Error::new(e)),
         // }
 
