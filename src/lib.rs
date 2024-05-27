@@ -1,7 +1,7 @@
 // pub mod conversable_agent;
 // pub mod groupchat;
 pub mod immutable_agent;
-// pub mod exec_python;
+pub mod exec_python;
 // pub mod groupchat;
 pub mod llama_structs;
 pub mod llm_llama_local;
@@ -167,9 +167,4 @@ When you find an answer, verify the answer carefully. Include verifiable evidenc
     );
 }
 
-fn use_function() {
-    let args = ["Sample task"]; // This creates an array, not a Vec
-    let start_function = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
-    let result = start_function(&args); // Correctly pass a slice by referencing the array
-    println!("{}", result);
-}
+

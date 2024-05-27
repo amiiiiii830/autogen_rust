@@ -123,6 +123,7 @@ impl Message {
     }
 }
 
+#[allow(deprecated)]
 impl From<Message> for ChatCompletionRequestMessage {
     fn from(message: Message) -> ChatCompletionRequestMessage {
         match message.role {

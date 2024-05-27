@@ -1,7 +1,6 @@
 use async_openai::types::Role;
 use autogen_rust::immutable_agent::*;
 use autogen_rust::llama_structs::*;
-use autogen_rust::message_store::*;
 // use autogen_rust::tool_call_actuators::*;
 use anyhow::Result;
 use rusqlite::Connection;
@@ -10,7 +9,8 @@ use tokio;
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    let system_prompt = r#"<|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools> {"type": "function", "function": {"name": "get_current_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"}, "format": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "The temperature unit to use. Infer this from the users location."}}, "required": ["location", "format"]}}} </tools> Use the following pydantic model json schema for each tool call you will make: {"properties": {"arguments": {"title": "Arguments", "type": "object"}, "name": {"title": "Name", "type": "string"}}, "required": ["arguments", "name"], "title": "FunctionCall", "type": "object"} For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+    let system_prompt =
+        r#"<|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools> {"type": "function", "function": {"name": "get_current_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"}, "format": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "The temperature unit to use. Infer this from the users location."}}, "required": ["location", "format"]}}} </tools> Use the following pydantic model json schema for each tool call you will make: {"properties": {"arguments": {"title": "Arguments", "type": "object"}, "name": {"title": "Name", "type": "string"}}, "required": ["arguments", "name"], "title": "FunctionCall", "type": "object"} For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
     <tool_call>
     {"arguments": <args-dict>, "name": <function-name>}
     </tool_call>"#;
@@ -44,19 +44,6 @@ async fn main() -> Result<()> {
     // let code = extract_code(raw);
 
     // println!("{:?}", code);
-
-    // let mut coding_agent = ConversableAgent::new("coding");
-    // let message = Message::new(
-    //     Some(Content::Text(
-    //         "create code to calculate prime numbers below 100".to_string(),
-    //     )),
-    //     Some("random".to_string()),
-    //     Role::User,
-    //     None,
-    // );
-
-    // let code = coding_agent.start_coding(&message).await?;
-    // println!("{:?}", code);
     let conn = Connection::open_in_memory()?;
 
     conn.execute(
@@ -69,37 +56,55 @@ async fn main() -> Result<()> {
             tokens_count INTEGER,
             next_speaker TEXT
         )",
-        [],
+        []
     )?;
 
-    let messages = vec![
-        Message {
-            content: Content::Text("Hello".to_string()),
-            name: Some("Agent1".to_string()),
-            role: Role::User,
-        },
-        Message {
-            content: Content::Text("How can I assist you?".to_string()),
-            name: Some("Agent2".to_string()),
-            role: Role::Assistant,
-        },
-        Message {
-            content: Content::ToolCall(ToolCall {
-                name: "search".to_string(),
-                arguments: Some(std::collections::HashMap::new()),
-            }),
-            name: Some("Agent1".to_string()),
-            role: Role::Tool,
-        },
-    ];
+    let coding_agent: ImmutableAgent = ImmutableAgent::new(
+        "coding_agent",
+        "you're a Python coder",
+        None,
+        "",
+        "an iterative python coder"
+    );
+    let message: Message = Message::new(
+        Content::Text("create code to calculate prime numbers below 100".to_string()),
+        Some("random".to_string()),
+        Role::User
+    );
 
-    for message in messages {
-        save_message(&conn, "Agent1", message.clone(), "Agent2").await?;
-    }
-    let messages = retrieve_messages(&conn, "Agent1").await?;
-    for message in messages {
-        println!("{:?}", message);
-    }
+
+    coding_agent.start_coding(&message, &conn).await;
+    let code = coding_agent.start_coding(&message, &conn).await?;
+    // println!("{:?}", code);
+
+    // let messages = vec![
+    //     Message {
+    //         content: Content::Text("Hello".to_string()),
+    //         name: Some("Agent1".to_string()),
+    //         role: Role::User,
+    //     },
+    //     Message {
+    //         content: Content::Text("How can I assist you?".to_string()),
+    //         name: Some("Agent2".to_string()),
+    //         role: Role::Assistant,
+    //     },
+    //     Message {
+    //         content: Content::ToolCall(ToolCall {
+    //             name: "search".to_string(),
+    //             arguments: Some(std::collections::HashMap::new()),
+    //         }),
+    //         name: Some("Agent1".to_string()),
+    //         role: Role::Tool,
+    //     }
+    // ];
+
+    // for message in messages {
+    //     save_message(&conn, "Agent1", message.clone(), "Agent2").await?;
+    // }
+    // let messages = retrieve_messages(&conn, "Agent1").await?;
+    // for message in messages {
+    //     println!("{:?}", message);
+    // }
 
     Ok(())
 }

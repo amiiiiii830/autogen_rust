@@ -105,7 +105,7 @@ pub async fn fire_tool_call(
     //     "getTimeOfDay" => get_time_of_day(),
     //     _ => "".to_string(),
     // };
-    let res = chat_inner_async(&system_prompt, &user_prompt, 500).await?;
+    let _res = chat_inner_async(&system_prompt, &user_prompt, 500).await?;
 
     // if let Some(parsed) = output_llama_response(res) {
     //     match parsed.content {

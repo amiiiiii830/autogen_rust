@@ -4,11 +4,11 @@ use async_openai::types::Role;
 use rusqlite::{params, Connection, Result};
 
 trait RoleToString {
-    fn to_string(&self, conn: &Connection) -> String;
+    fn to_string(&self) -> String;
 }
 
 impl RoleToString for Role {
-    fn to_string(&self, conn: &Connection) -> String {
+    fn to_string(&self) -> String {
         match self {
             Role::Assistant => String::from("assistant"),
             Role::System => String::from("system"),
@@ -210,8 +210,8 @@ pub async fn register_agent(
     tools_map_meta: &str,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO AgentStore (agent_name, current_system_prompt, tools_map_meta) VALUES (?1, ?2, ?3)",
-        params![agent_name, system_prompt, tools_map_meta],
+        "INSERT INTO AgentStore (agent_name, agent_description, current_system_prompt, tools_map_meta) VALUES (?1, ?2, ?3, ?4)",
+        params![agent_name, agent_description, system_prompt, tools_map_meta],
     )?;
     Ok(())
 }
