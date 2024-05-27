@@ -332,7 +332,7 @@ impl ImmutableAgent {
             Message {
                 role: Role::User,
                 name: None,
-                content: Content::Text(user_prompt),
+                content: Content::Text(user_prompt.clone()),
             }
         ];
         let mut message_vec = messages.clone();
@@ -342,46 +342,37 @@ impl ImmutableAgent {
         match &output.content {
             Content::Text(_out) => {
                 let code = extract_code(_out);
+                let mut this_round_good = false;
+                let mut msg = String::new();
 
                 match run_python_capture(&code) {
                     Ok(success_result_text) => {
-                        let (terminate_or_not, key_points) = self._is_termination(
-                            &success_result_text,
-                            &user_prompt,
-                            conn
-                        ).await;
-
-                        let result_message = Message {
-                            name: None,
-                            content: Content::Text(key_points.clone()),
-                            role: Role::Assistant,
-                        };
-                        if terminate_or_not {
-                            let _ = save_message(
-                                conn,
-                                &self.name,
-                                result_message.clone(),
-                                "user_proxy"
+                        for _ in 1..3 {
+                            (this_round_good, msg, message_vec) = self.iterate_coding_success_case(
+                                &message_vec,
+                                &success_result_text,
+                                conn
                             ).await;
-                        } else {
-                            message_vec.push(result_message);
-                            return Ok(message_vec);
+
+                            if this_round_good {
+                                break;
+                            } else {
+                                self.iterate_coding_error_case(&message_vec, &msg.clone()).await;
+                            }
                         }
                     }
-                    Err(res) => {
-                        let formatter = ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap();
+                    Err(err_msg) => {
+                        for _ in 1..9 {
+                            (this_round_good, msg, message_vec) = self.iterate_coding_error_case(
+                                &message_vec,
+                                &err_msg
+                            ).await;
 
-                        let wrapped_fail_result = formatter(res);
-                        let result_message = Message {
-                            name: None,
-                            content: Content::Text(wrapped_fail_result),
-                            role: Role::Assistant,
-                        };
-
-                        message_vec.push(result_message);
-
-                        for i in 1..10 {
-                            message_vec = self.iterate_coding(&message_vec.clone(), conn).await;
+                            if this_round_good {
+                                break;
+                            } else {
+                                self.iterate_coding_error_case(&message_vec, &msg.clone()).await;
+                            }
                         }
                     }
                 }
@@ -400,8 +391,7 @@ impl ImmutableAgent {
     pub async fn iterate_coding_error_case(
         &self,
         message_history: &Vec<Message>,
-        error_msg: &str,
-        conn: &Connection
+        error_msg: &str
     ) -> (bool, String, Vec<Message>) {
         let mut message_vec = message_history.clone();
         let formatter = ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap();
@@ -415,7 +405,9 @@ impl ImmutableAgent {
 
         message_vec.push(result_message);
 
-        let output = chat_inner_async_llama(message_vec, 1000u16).await?;
+        let output = chat_inner_async_llama(message_vec.clone(), 1000u16).await.expect(
+            "LLM generation failure"
+        );
 
         match &output.content {
             Content::Text(_out) => {
@@ -460,181 +452,28 @@ impl ImmutableAgent {
             role: Role::User,
         };
 
-        message_vec.push(result_message);
+        let instruction = &message_history.get(1).unwrap().content_to_string();
 
-        let output = chat_inner_async_llama(message_vec, 1000u16).await.expect(
-            "error LLM generation"
-        );
+        let (terminate_or_not, msg) = self._is_termination(
+            success_result_text,
+            &instruction,
+            conn
+        ).await;
 
-        match &output.content {
-            Content::Text(_out) => {
-                let code = extract_code(_out);
+        if terminate_or_not {
+            let result_message = Message {
+                name: None,
+                content: Content::Text(msg.clone()),
+                role: Role::User,
+            };
+            message_vec.pop();
+            message_vec.push(result_message.clone());
 
-                match run_python_capture(&code) {
-                    Ok(success_result_text) => {
-                        let result_message = Message {
-                            name: None,
-                            content: Content::Text(success_result_text.clone()),
-                            role: Role::Assistant,
-                        };
-                        message_vec.push(result_message);
-                        (true, success_result_text, message_vec)
-                    }
-                    Err(error_msg) => {
-                        let result_message = Message {
-                            name: None,
-                            content: Content::Text(error_msg.clone()),
-                            role: Role::Assistant,
-                        };
-                        message_vec.push(result_message);
-                        (false, error_msg, message_vec)
-                    }
-                }
-            }
-            Content::ToolCall(call) => panic!(),
+            let _ = save_message(conn, &self.name, result_message, "user_proxy").await;
+            (true, msg, message_vec)
+        } else {
+            (false, success_result_text.to_string(), message_history.clone())
         }
-    }
-    pub async fn iterate_coding_error_case_copy(
-        &self,
-        message_history: &Vec<Message>,
-        error_msg: &str,
-        conn: &Connection
-    ) -> (bool, String, Vec<Message>) {
-        let mut message_vec = message_history.clone();
-        let formatter = ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap();
-
-        let wrapped_fail_result = formatter(&[error_msg]);
-        let result_message = Message {
-            name: None,
-            content: Content::Text(wrapped_fail_result),
-            role: Role::User,
-        };
-
-        message_vec.push(result_message);
-
-        let output = chat_inner_async_llama(message_vec, 1000u16).await?;
-
-        match &output.content {
-            Content::Text(_out) => {
-                let code = extract_code(_out);
-
-                match run_python_capture(&code) {
-                    Ok(success_result_text) => {
-                        let (terminate_or_not, key_points) = self._is_termination(
-                            &success_result_text,
-                            &instruction,
-                            conn
-                        ).await;
-
-                        let result_message = Message {
-                            name: None,
-                            content: Content::Text(key_points.clone()),
-                            role: Role::Assistant,
-                        };
-                        if terminate_or_not {
-                            let _ = save_message(
-                                conn,
-                                &self.name,
-                                result_message.clone(),
-                                "user_proxy"
-                            ).await;
-                        } else {
-                            message_vec.push(result_message);
-                            return Ok(message_vec);
-                        }
-                    }
-                    Err(error_msg) => {
-                        let message_vec = self.iterate_coding_error_case(
-                            message_history,
-                            &error_msg,
-                            conn
-                        ).await;
-
-                        for i in 1..10 {
-                            message_vec = self.iterate_coding(&message_vec.clone(), conn).await;
-                        }
-                    }
-                }
-            }
-            Content::ToolCall(call) => {
-                // let func = call.name;
-                // let args = call.arguments.unwrap_or_default();
-                // Execute the tool call function
-                // func(args);
-            }
-        }
-        Ok(message_vec)
-    }
-    pub async fn iterate_coding_success(
-        &self,
-        message_history: &Vec<Message>,
-        code: &str,
-        success_run_result: &str,
-        conn: &Connection
-    ) -> anyhow::Result<Vec<Message>> {
-        let mut message_vec = message_history.clone();
-        let formatter = ITERATE_CODING_SUCCESS_TEMPLATE.lock().unwrap();
-
-        let result_message = Message {
-            name: None,
-            content: Content::Text(formatter(&[code, success_run_result])),
-            role: Role::User,
-        };
-
-        message_vec.push(result_message);
-
-        let output = chat_inner_async_llama(message_vec, 1000u16).await?;
-
-        match &output.content {
-            Content::Text(_out) => {
-                let code = extract_code(_out);
-
-                match run_python_capture(code) {
-                    Ok(success_result_text) => {
-                        let (terminate_or_not, key_points) = self._is_termination(
-                            res,
-                            &user_prompt,
-                            conn
-                        ).await;
-
-                        let result_message = Message {
-                            name: None,
-                            content: Content::Text(key_points.clone()),
-                            role: Role::Assistant,
-                        };
-                        if terminate_or_not {
-                            let _ = save_message(
-                                conn,
-                                &self.name,
-                                result_message.clone(),
-                                "user_proxy"
-                            ).await;
-                        } else {
-                            message_vec.push(result_message);
-                            return Ok(message_vec);
-                        }
-                    }
-                    Err(res) => {
-                        let message_vec = self.iterate_coding_error_case(
-                            message_history,
-                            error_msg,
-                            conn
-                        ).await;
-
-                        for i in 1..10 {
-                            message_vec = self.iterate_coding(&message_vec.clone(), conn).await;
-                        }
-                    }
-                }
-            }
-            Content::ToolCall(call) => {
-                // let func = call.name;
-                // let args = call.arguments.unwrap_or_default();
-                // Execute the tool call function
-                // func(args);
-            }
-        }
-        Ok(message_vec)
     }
 
     pub async fn extract_and_run_python_capture(
