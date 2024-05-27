@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     //         "create code to calculate prime numbers below 100".to_string(),
     //     )),
     //     Some("random".to_string()),
-    //     Some(Role::User),
+    //     Role::User,
     //     None,
     // );
 
@@ -74,22 +74,22 @@ async fn main() -> Result<()> {
 
     let messages = vec![
         Message {
-            content: Some(Content::Text("Hello".to_string())),
+            content: Content::Text("Hello".to_string()),
             name: Some("Agent1".to_string()),
-            role: Some(Role::User),
+            role: Role::User,
         },
         Message {
-            content: Some(Content::Text("How can I assist you?".to_string())),
+            content: Content::Text("How can I assist you?".to_string()),
             name: Some("Agent2".to_string()),
-            role: Some(Role::Assistant),
+            role: Role::Assistant,
         },
         Message {
-            content: Some(Content::ToolCall(ToolCall {
+            content: Content::ToolCall(ToolCall {
                 name: "search".to_string(),
                 arguments: Some(std::collections::HashMap::new()),
-            })),
+            }),
             name: Some("Agent1".to_string()),
-            role: Some(Role::Tool),
+            role: Role::Tool,
         },
     ];
 

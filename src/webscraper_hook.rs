@@ -12,11 +12,13 @@ pub async fn get_webpage_text(url: String) -> anyhow::Result<String> {
 }
 
 pub async fn search_bing(query: &str) -> anyhow::Result<String> {
+    #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]
     struct QueryContext {
         originalQuery: String,
     }
 
+    #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]
     struct WebPage {
         id: String,
@@ -30,6 +32,7 @@ pub async fn search_bing(query: &str) -> anyhow::Result<String> {
         isNavigational: bool,
     }
 
+    #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]
     struct WebPages {
         webSearchUrl: String,
@@ -47,6 +50,7 @@ pub async fn search_bing(query: &str) -> anyhow::Result<String> {
         items: Vec<Item>,
     }
 
+    #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]
     struct Item {
         answerType: String,
@@ -59,6 +63,7 @@ pub async fn search_bing(query: &str) -> anyhow::Result<String> {
         id: String,
     }
 
+    #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]
     struct SearchResponse {
         _type: String,

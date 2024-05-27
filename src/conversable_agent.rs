@@ -7,17 +7,17 @@ use crate::message_store::*;
 use anyhow;
 use async_openai::types::Role;
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use serde::{ Deserialize, Serialize };
+use serde_json::{ json, Value };
+use std::collections::{ HashMap, VecDeque };
+use std::sync::{ Arc, Mutex };
 type Context = HashMap<String, String>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
-    pub content: Option<Content>,
+    pub content: Content,
     pub name: Option<String>,
-    pub role: Option<Role>,
+    pub role: Role,
 }
 
 impl Default for Message {
@@ -25,13 +25,13 @@ impl Default for Message {
         Message {
             content: None,
             name: None,
-            role: None,
+            role: Role::User,
         }
     }
 }
 
 impl Message {
-    pub fn new(content: Option<Content>, name: Option<String>, role: Option<Role>) -> Self {
+    pub fn new(content: Content, name: Option<String>, role: Option<Role>) -> Self {
         Message {
             content,
             name,
@@ -39,7 +39,6 @@ impl Message {
         }
     }
 }
-
 
 pub struct ConversableAgent {
     pub name: String,
@@ -74,7 +73,6 @@ impl ConversableAgent {
         }
     }
     pub fn router_agent(&self, name: &str, conn: &Connection) -> Self {
-
         let agent = ConversableAgent {
             name: "router_agent".to_string(),
             max_consecutive_auto_reply: 1u8,
@@ -83,8 +81,13 @@ impl ConversableAgent {
             default_auto_reply: json!("this is router_agent"),
             description: String::from("agent to select next speaker"),
         };
-        register_agent(conn, agent_name, agent_description, &ROUTER_AGENT_SYSTEM_PROMPT, tools_map_meta).await;
-        
+        register_agent(
+            conn,
+            agent_name,
+            agent_description,
+            &ROUTER_AGENT_SYSTEM_PROMPT,
+            tools_map_meta
+        ).await;
     }
     pub fn new(
         name: &str,
@@ -92,7 +95,7 @@ impl ConversableAgent {
         human_input_mode: &str,
         llm_config: Option<Value>,
         default_auto_reply: Value,
-        description: &str,
+        description: &str
     ) -> Self {
         ConversableAgent {
             name: name.to_string(),
@@ -112,7 +115,7 @@ impl ConversableAgent {
     // pub async fn in_tool_call() -> bool {}
     pub async fn message_history(
         &self,
-        conn: &Connection,
+        conn: &Connection
     ) -> Result<Vec<Message>, rusqlite::Error> {
         retrieve_messages(conn, &self.name).await
     }
@@ -137,12 +140,12 @@ impl ConversableAgent {
     pub async fn a_generate_reply(
         &self,
         messages: Vec<Message>,
-        conn: &Connection,
+        conn: &Connection
     ) -> Option<Message> {
         let max_token = 1000u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(messages, max_token)
-            .await
-            .expect("Failed to generate reply");
+        let output: LlamaResponseMessage = chat_inner_async_llama(messages, max_token).await.expect(
+            "Failed to generate reply"
+        );
 
         let res = match output.content {
             Content::Text(out) => {
@@ -168,7 +171,7 @@ impl ConversableAgent {
         Some(Message {
             content: Some(res),
             name: None,
-            role: None,
+            role: Role::User,
         })
     }
 
@@ -176,23 +179,22 @@ impl ConversableAgent {
         &mut self,
         message: &Message,
         instruction: &str,
-        conn: &Connection,
+        conn: &Connection
     ) -> anyhow::Result<()> {
         let speakers_and_abilities = get_agent_names_and_abilities(conn).await?;
         let system_message = self.system_message(conn).await?;
         let user_prompt = format!(
             "Here are the list of agents and their abilties: {:?}, please examine current result: {} against the instructed task {:?}, and decide which speaker to be the next",
-           speakers_and_abilities, message.content_to_string().unwrap(),instruction, 
+            speakers_and_abilities,
+            message.content_to_string().unwrap(),
+            instruction
         );
 
-        let messages = vec![
-            system_message,
-            Message {
-                role: Some(Role::User),
-                name: None,
-                content: Some(Content::Text(user_prompt)),
-            },
-        ];
+        let messages = vec![system_message, Message {
+            role: Role::User,
+            name: None,
+            content: Some(Content::Text(user_prompt)),
+        }];
 
         let selected_speaker = chat_inner_async_llama(messages, 100).await?;
 
@@ -204,7 +206,7 @@ impl ConversableAgent {
     pub async fn update_system_prompt(
         &mut self,
         new_prompt: &str,
-        conn: &Connection,
+        conn: &Connection
     ) -> anyhow::Result<()> {
         let _ = update_system_prompt_db(conn, &self.name, new_prompt).await;
         Ok(())
@@ -221,7 +223,7 @@ impl ConversableAgent {
     pub async fn start_coding(
         &self,
         user_message: &Message,
-        conn: &Connection,
+        conn: &Connection
     ) -> anyhow::Result<String> {
         let system_message = self.system_message(conn).await?;
         let user_prompt = format!(
@@ -229,14 +231,11 @@ impl ConversableAgent {
             user_message.content_to_string()
         );
 
-        let messages = vec![
-            system_message,
-            Message {
-                role: Some(Role::User),
-                name: None,
-                content: Some(Content::Text(user_prompt)),
-            },
-        ];
+        let messages = vec![system_message, Message {
+            role: Role::User,
+            name: None,
+            content: Some(Content::Text(user_prompt)),
+        }];
 
         let code = chat_inner_async_llama(messages, 1000u16).await?;
 
@@ -251,7 +250,7 @@ impl ConversableAgent {
     pub async fn iterate_coding(
         &self,
         message_history: &Vec<Message>,
-        conn: &Connection,
+        conn: &Connection
     ) -> anyhow::Result<String> {
         // need to wrap the code and error msgs in template
         let user_prompt = format!(
@@ -260,7 +259,7 @@ impl ConversableAgent {
         );
 
         let messages = vec![Message {
-            role: Some(Role::User),
+            role: Role::User,
             name: None,
             content: Some(Content::Text(user_prompt)),
         }];
@@ -276,9 +275,7 @@ impl ConversableAgent {
     }
 
     pub async fn extract_and_run_python(&self, in_message: &Message) -> anyhow::Result<String> {
-        let raw = in_message
-            .content_to_string()
-            .expect("failed to convert message to String");
+        let raw = in_message.content_to_string().expect("failed to convert message to String");
 
         let code = extract_code(&raw);
 
@@ -303,10 +300,7 @@ impl ConversableAgent {
     // }
 
     pub async fn last_message(&self, conn: &Connection) -> Option<Message> {
-        let messages = self
-            .message_history(conn)
-            .await
-            .expect("failed to get message history");
+        let messages = self.message_history(conn).await.expect("failed to get message history");
 
         match messages.last() {
             Some(msg) => Some(msg.clone()),

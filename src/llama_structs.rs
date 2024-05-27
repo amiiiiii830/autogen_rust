@@ -3,7 +3,7 @@ use async_openai::types::{CompletionUsage, CreateChatCompletionResponse, Role};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{llm_llama_local::chat_inner_async, webscraper_hook::get_webpage_text};
+use crate::llm_llama_local::chat_inner_async;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ToolCall {

@@ -104,10 +104,10 @@ pub async fn chat_inner_async(
 }
 
 impl Message {
-    pub fn content_to_string(&self) -> Option<String> {
+    pub fn content_to_string(&self) -> String {
         match &self.content {
-            Some(Content::Text(text)) => Some(text.clone()),
-            Some(Content::ToolCall(tool_call)) => Some(format!(
+            Content::Text(text) => text.clone(),
+            Content::ToolCall(tool_call) => format!(
                 "tool_call: {}, arguments: {}",
                 tool_call.name,
                 tool_call
@@ -118,8 +118,7 @@ impl Message {
                     .map(|(arg, val)| format!("{:?}: {:?}", arg, val))
                     .collect::<Vec<String>>()
                     .join(", ")
-            )),
-            None => None,
+            ),
         }
     }
 }
@@ -127,42 +126,36 @@ impl Message {
 impl From<Message> for ChatCompletionRequestMessage {
     fn from(message: Message) -> ChatCompletionRequestMessage {
         match message.role {
-            Some(Role::System) => {
+            Role::System => {
                 ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
-                    content: message.content_to_string().unwrap_or("empty".to_string()),
+                    content: message.content_to_string(),
                     role: Role::System,
                     name: message.name,
                 })
             }
-            Some(Role::User) => {
-                ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
-                    content: ChatCompletionRequestUserMessageContent::Text(
-                        message.content_to_string().unwrap_or("empty".to_string()),
-                    ),
-                    role: Role::User,
-                    name: message.name,
-                })
-            }
-            Some(Role::Assistant) => {
+            Role::User => ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(
+                    message.content_to_string(),
+                ),
+                role: Role::User,
+                name: message.name,
+            }),
+            Role::Assistant => {
                 ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
-                    content: Some(message.content_to_string().unwrap_or("empty".to_string())),
+                    content: Some(message.content_to_string()),
                     role: Role::Assistant,
                     name: message.name,
                     tool_calls: None,
                     function_call: None,
                 })
             }
-            Some(_) => {
-                ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
-                    content: Some(message.content_to_string().unwrap_or("empty".to_string())),
-                    role: Role::Assistant,
-                    name: message.name,
-                    tool_calls: None,
-                    function_call: None,
-                })
-            }
-
-            _ => panic!("Message role must be specified"),
+            _ => ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
+                content: Some(message.content_to_string()),
+                role: Role::Assistant,
+                name: message.name,
+                tool_calls: None,
+                function_call: None,
+            }),
         }
     }
 }

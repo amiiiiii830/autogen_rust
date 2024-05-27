@@ -55,19 +55,19 @@ impl From<NaiveMessage> for Message {
                 .strip_prefix("toolcall:")
                 .unwrap_or("")
                 .to_string();
-            Some(Content::ToolCall(ToolCall {
+            Content::ToolCall(ToolCall {
                 name: tool_name,
                 arguments: None,
-            }))
+            })
         } else {
-            Some(Content::Text(naive.content))
+            Content::Text(naive.content)
         };
 
         let role = match naive.role.as_str() {
-            "system" => Some(Role::System),
-            "user" => Some(Role::User),
-            "assistant" => Some(Role::Assistant),
-            _ => Some(Role::Assistant),
+            "system" => Role::System,
+            "user" => Role::User,
+            "assistant" => Role::Assistant,
+            _ => Role::Assistant,
         };
 
         Message {
@@ -81,15 +81,14 @@ impl From<NaiveMessage> for Message {
 impl From<Message> for NaiveMessage {
     fn from(message: Message) -> Self {
         let content = match message.content {
-            Some(Content::Text(text)) => text,
-            Some(Content::ToolCall(tool_call)) => format!("toolcall:{}", tool_call.name),
-            None => String::new(),
+            Content::Text(text) => text,
+            Content::ToolCall(tool_call) => format!("toolcall:{}", tool_call.name),
         };
 
         let role = match message.role {
-            Some(Role::System) => "system".to_string(),
-            Some(Role::User) => "user".to_string(),
-            Some(Role::Assistant) => "assistant".to_string(),
+            Role::System => "system".to_string(),
+            Role::User => "user".to_string(),
+            Role::Assistant => "assistant".to_string(),
             _ => "user".to_string(),
         };
 
@@ -117,8 +116,8 @@ pub async fn retrieve_messages(conn: &Connection, agent_name: &str) -> Result<Ve
     let mut stmt = conn.prepare("SELECT message_content, message_role, message_context FROM GroupChat WHERE agent_name = ?1")?;
     let rows = stmt.query_map(params![agent_name], |row| {
         Ok(Message {
-            content: Some(Content::Text(row.get::<_, String>(0)?)), // Specify type as String
-            role: Some(Role::from_str(&row.get::<_, String>(1)?)), // Specify type as String and use from_str
+            content: Content::Text(row.get::<_, String>(0)?), // Specify type as String
+            role: Role::from_str(&row.get::<_, String>(1)?), // Specify type as String and use from_str
             name: Some(agent_name.to_owned()),
         })
     })?;
@@ -136,8 +135,8 @@ pub async fn retrieve_most_recent_message(conn: &Connection, agent_name: &str) -
 
     let row = stmt.query_row(params![agent_name], |row| {
         Ok(Message {
-            content: Some(Content::Text(row.get::<_, String>(0)?)), // Specify type as String
-            role: Some(Role::from_str(&row.get::<_, String>(1)?)), // Specify type as String and use from_str
+            content: Content::Text(row.get::<_, String>(0)?), // Specify type as String
+            role: Role::from_str(&row.get::<_, String>(1)?), // Specify type as String and use from_str
             name: Some(agent_name.to_owned()),
         })
     });
@@ -160,8 +159,7 @@ pub async fn save_message(
     next_speaker: &str,
 ) -> Result<()> {
     let tokens_count = message
-        .content_to_string()
-        .map_or(0, |s| s.split_whitespace().count() as i32);
+        .content_to_string().split_whitespace().count();
 
     let naive_message = NaiveMessage::from(message);
     conn.execute(
@@ -221,11 +219,11 @@ pub async fn register_agent(
 pub async fn get_agent_names_and_abilities(conn: &Connection) -> Result<String> {
     let mut stmt = conn.prepare("SELECT agent_name, agent_description FROM AgentStore")?;
     let rows = stmt.query_map([], |row| {
-        Ok((format!(
+        Ok(format!(
             "agent_name: {:?}, abilities: {:?}",
             &row.get::<_, String>(0)?,
             &row.get::<_, String>(1)?
-        ))) // Specify type as String
+        )) // Specify type as String
     })?;
 
     let mut agent_names = String::new();
@@ -280,9 +278,9 @@ pub async fn get_system_message_db(conn: &Connection, agent_name: &str) -> Resul
     if let Some(row) = rows.next()? {
         let prompt: String = row.get(0)?;
         Ok(Message {
-            content: Some(Content::Text(prompt)),
+            content: Content::Text(prompt),
             name: None,
-            role: Some(Role::System),
+            role: Role::System,
         })
     } else {
         Err(rusqlite::Error::QueryReturnedNoRows)
