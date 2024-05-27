@@ -1,4 +1,4 @@
-use crate::conversable_agent::*;
+use crate::immutable_agent::*;
 use crate::llama_structs::*;
 use async_openai::types::Role;
 use rusqlite::{params, Connection, Result};

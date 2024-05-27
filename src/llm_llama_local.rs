@@ -1,4 +1,4 @@
-use crate::conversable_agent::Message;
+use crate::immutable_agent::Message;
 use crate::llama_structs::{output_llama_response, Content, LlamaResponseMessage};
 use async_openai::{
     config::Config,

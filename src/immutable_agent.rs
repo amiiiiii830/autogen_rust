@@ -3,7 +3,7 @@ use crate::exec_python::*;
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
 use crate::message_store::*;
-// use crate::CODE_PYTHON_SYSTEM_MESSAGE;
+use crate::ROUTER_AGENT_SYSTEM_PROMPT;
 use anyhow;
 use async_openai::types::Role;
 use rusqlite::Connection;
@@ -11,9 +11,35 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use regex::Regex;
+
+pub fn parse_next_speaker(input: &str) -> (String, String) {
+    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
+    let json_str = json_regex
+        .captures(input)
+        .and_then(|cap| cap.get(0))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let continue_to_work_or_end_regex =
+        Regex::new(r#""continue_to_work_or_end":\s*"([^"]*)""#).unwrap();
+    let next_speaker_regex = Regex::new(r#""next_speaker":\s*"([^"]*)""#).unwrap();
+
+    let continue_to_work_or_end = continue_to_work_or_end_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let next_speaker = next_speaker_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    (continue_to_work_or_end, next_speaker)
+}
+
 type Context = HashMap<String, String>;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Message {
     pub content: Option<Content>,
     pub name: Option<String>,
@@ -40,81 +66,39 @@ impl Message {
     }
 }
 
-
-pub struct ConversableAgent {
+pub struct ImmutableAgent {
     pub name: String,
-    pub max_consecutive_auto_reply: u8,
-    pub human_input_mode: String,
+    pub system_prompt: String,
     pub llm_config: Option<Value>,
-    pub default_auto_reply: Value,
+    pub tools_map_meta: String,
     pub description: String,
 }
-impl Clone for ConversableAgent {
-    fn clone(&self) -> Self {
-        ConversableAgent {
-            name: self.name.clone(),
-            max_consecutive_auto_reply: self.max_consecutive_auto_reply,
-            human_input_mode: self.human_input_mode.clone(),
-            llm_config: self.llm_config.clone(),
-            default_auto_reply: self.default_auto_reply.clone(),
-            description: self.description.clone(),
-        }
-    }
-}
 
-impl ConversableAgent {
-    pub fn default(name: &str) -> Self {
-        ConversableAgent {
-            name: name.to_string(),
-            max_consecutive_auto_reply: 10u8,
-            human_input_mode: String::from("ALWAYS"),
-            llm_config: None,
-            default_auto_reply: json!("this is user_proxy"),
-            description: String::from("agent acting as user_proxy"),
-        }
-    }
-    pub fn router_agent(&self, name: &str, conn: &Connection) -> Self {
-
-        let agent = ConversableAgent {
-            name: "router_agent".to_string(),
-            max_consecutive_auto_reply: 1u8,
-            human_input_mode: String::from("NEVER"),
-            llm_config: None,
-            default_auto_reply: json!("this is router_agent"),
-            description: String::from("agent to select next speaker"),
-        };
-        register_agent(conn, agent_name, agent_description, &ROUTER_AGENT_SYSTEM_PROMPT, tools_map_meta).await;
-        
-    }
+impl ImmutableAgent {
     pub fn new(
         name: &str,
-        max_consecutive_auto_reply: u8,
-        human_input_mode: &str,
+        system_prompt: &str,
         llm_config: Option<Value>,
-        default_auto_reply: Value,
+        tools_map_meta: &str,
         description: &str,
     ) -> Self {
-        ConversableAgent {
+        ImmutableAgent {
             name: name.to_string(),
-            max_consecutive_auto_reply,
-            human_input_mode: String::from(human_input_mode),
+            system_prompt: system_prompt.to_string(),
             llm_config,
-            default_auto_reply,
-            description: String::from(description),
+            tools_map_meta: tools_map_meta.to_string(),
+            description: description.to_string(),
         }
     }
 
-    pub async fn system_message(&self, conn: &Connection) -> Result<Message, rusqlite::Error> {
-        get_system_message_db(conn, &self.name).await
-    }
-
-    // pub async fn tool_calls_meta() -> String {}
-    // pub async fn in_tool_call() -> bool {}
-    pub async fn message_history(
-        &self,
-        conn: &Connection,
-    ) -> Result<Vec<Message>, rusqlite::Error> {
-        retrieve_messages(conn, &self.name).await
+    pub fn router_agent(name: &str, llm_config: Option<Value>, tools_map_meta: &str) -> Self {
+        ImmutableAgent {
+            name: "router_agent".to_string(),
+            system_prompt: ROUTER_AGENT_SYSTEM_PROMPT.to_string(),
+            llm_config,
+            tools_map_meta: tools_map_meta.to_string(),
+            description: "router agent".to_string(),
+        }
     }
 
     pub fn _is_termination(&self, content: &str) -> bool {
@@ -127,10 +111,10 @@ impl ConversableAgent {
 
     pub async fn receive_message(&self, conn: &Connection) -> Option<Message> {
         let next_speaker = get_next_speaker_db(conn).await.ok()?;
-        match next_speaker == self.name {
-            true => retrieve_most_recent_message(conn, &self.name).await.ok(),
-
-            false => None,
+        if next_speaker == self.name {
+            retrieve_most_recent_message(conn, &self.name).await.ok()
+        } else {
+            None
         }
     }
 
@@ -138,29 +122,33 @@ impl ConversableAgent {
         &self,
         messages: Vec<Message>,
         conn: &Connection,
-    ) -> Option<Message> {
+    ) -> Option<Vec<Message>> {
+let mut message_vec = messages.clone();
+        let user_prompt = messages.clone().get(1).unwrap_or_default().content_to_string();
+        let message =   messages.last().unwrap();
         let max_token = 1000u16;
         let output: LlamaResponseMessage = chat_inner_async_llama(messages, max_token)
             .await
             .expect("Failed to generate reply");
 
-        let res = match output.content {
+        match output.content {
             Content::Text(out) => {
-                if self._is_termination(&out) {
-                    todo!()
-                } else {
-                    let next_speaker = assign_next_speaker(&conn).await.ok()?;
 
-                    if next_speaker == self.name || next_speaker.is_none() {
-                    } else {
-                        save_message(conn, agent_name, message, next_speaker).await;
-                    }
-                }
+let (terminate_or_not, next_speaker) = self.assign_next_speaker(message, &user_prompt, conn).await?;
+
+let new_message = Message {
+                    content: Some(Content::Text(out)),
+                    role: Some(Role::Assistant),
+                    name: None,
+
+};
+message_vec.push(new_message);
+
             }
             Content::ToolCall(call) => {
                 let func = call.name;
-                let args = call.arguments;
-
+                let args = call.arguments.unwrap_or_default();
+                // Execute the tool call function
                 func(args)
             }
         };
@@ -173,20 +161,27 @@ impl ConversableAgent {
     }
 
     pub async fn assign_next_speaker(
-        &mut self,
+        &self,
         message: &Message,
         instruction: &str,
         conn: &Connection,
-    ) -> anyhow::Result<()> {
-        let speakers_and_abilities = get_agent_names_and_abilities(conn).await?;
-        let system_message = self.system_message(conn).await?;
-        let user_prompt = format!(
-            "Here are the list of agents and their abilties: {:?}, please examine current result: {} against the instructed task {:?}, and decide which speaker to be the next",
-           speakers_and_abilities, message.content_to_string().unwrap(),instruction, 
-        );
+    ) -> anyhow::Result<(bool, String)> {
+        let user_prompt = match get_agent_names_and_abilities(conn).await {
+            Err(_) => format!(
+                "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
+              instruction,  message.content_to_string().unwrap(), 
+            ),
+            Ok(c) => format!(
+                "Here are the list of agents and their abilities: {:?}, examine current result: {} against the task {:?}, please decide which is the next speaker to handle",
+               c, instruction,message.content_to_string().unwrap() ),
+        };
 
         let messages = vec![
-            system_message,
+            Message {
+                role: Some(Role::System),
+                name: None,
+                content: Some(Content::Text(&self.system_prompt)),
+            },
             Message {
                 role: Some(Role::User),
                 name: None,
@@ -194,21 +189,23 @@ impl ConversableAgent {
             },
         ];
 
-        let selected_speaker = chat_inner_async_llama(messages, 100).await?;
+        let raw_reply = chat_inner_async_llama(messages, 100).await?;
 
-        save_message(conn, agent_name, message, selected_speaker).await;
+let (terminate_or_not, next_speaker) = parse_next_speaker(&raw_reply.content_to_string());
 
-        Ok(())
+match terminate_or_not == "TERMINATE" {
+true => Ok((true, String::from(""))),
+false => {
+        save_message(conn, &self.name, message.clone(), &next_speaker).await;
+
+    
+    Ok((false, next_speaker.to_string()))},
+
+
+    
+
     }
-
-    pub async fn update_system_prompt(
-        &mut self,
-        new_prompt: &str,
-        conn: &Connection,
-    ) -> anyhow::Result<()> {
-        let _ = update_system_prompt_db(conn, &self.name, new_prompt).await;
-        Ok(())
-    }
+}
 
     pub fn execute_code_blocks(&self, code_blocks: &str) -> String {
         todo!()
@@ -256,7 +253,7 @@ impl ConversableAgent {
         // need to wrap the code and error msgs in template
         let user_prompt = format!(
             "Here is the task for you: {:?}",
-            user_message.content_to_string()
+            message_history.last().unwrap().content_to_string()
         );
 
         let messages = vec![Message {
@@ -283,24 +280,10 @@ impl ConversableAgent {
         let code = extract_code(&raw);
 
         match run_python_capture(&code) {
-            Ok(res) => todo!(),
-
-            Err(e) => todo!(),
+            Ok(res) => Ok(res),
+            Err(e) => Err(anyhow::Error::new(e)),
         }
     }
-
-    // pub async fn execute_tool_call(&self, call: &ToolCall) -> anyhow::Result<String, String> {
-    //     let func = call.name.clone();
-    //     let args = call.arguments.unwrap_or_default();
-
-    //     let len = args.len();
-
-    //     match len {
-    //         0 => call_function!(&func),
-    //         1 => call_function!(&func, args, single),
-    //         _ => call_function!(&func, args, multi),
-    //     }
-    // }
 
     pub async fn last_message(&self, conn: &Connection) -> Option<Message> {
         let messages = self
@@ -308,9 +291,6 @@ impl ConversableAgent {
             .await
             .expect("failed to get message history");
 
-        match messages.last() {
-            Some(msg) => Some(msg.clone()),
-            None => None,
-        }
+        messages.last().cloned()
     }
 }

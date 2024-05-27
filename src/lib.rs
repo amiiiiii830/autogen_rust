@@ -1,6 +1,6 @@
 // pub mod conversable_agent;
 // pub mod groupchat;
-pub mod conversable_agent;
+pub mod immutable_agent;
 pub mod exec_python;
 // pub mod groupchat;
 pub mod llama_structs;
@@ -16,10 +16,12 @@ type FormatterFn = Box<dyn Fn(&[&str]) -> String + Send + Sync>;
 lazy_static! {
     pub static ref ROUTER_AGENT_SYSTEM_PROMPT: String = r#"
     You are a helpful AI assistant acting as a discussion moderator or speaker selector. You will read descriptions of several agents and their abilities, examine the task instruction and the current result, and decide whether the task is done or needs further work. Use the following format to reply:
+    ```json
     {
         "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
         "next_speaker": "some_speaker" or empty in case "TERMINATE" in the previous field
     }
+    ```
     "#.to_string();
     // Follow these guidelines:"#.to_string();
 

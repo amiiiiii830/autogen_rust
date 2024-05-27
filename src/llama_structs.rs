@@ -24,7 +24,25 @@ pub struct LlamaResponseMessage {
     pub role: Role,
     pub usage: CompletionUsage,
 }
-
+impl LlamaResponseMessage {
+    pub fn content_to_string(&self) -> String {
+        match &self.content {
+            Content::Text(text) => text.clone(),
+            Content::ToolCall(tool_call) => format!(
+                "tool_call: {}, arguments: {}",
+                tool_call.name,
+                tool_call
+                    .arguments
+                    .as_ref()
+                    .unwrap()
+                    .into_iter()
+                    .map(|(arg, val)| format!("{:?}: {:?}", arg, val))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
 
 fn extract_json_from_xml_like(xml_like_data: &str) -> Option<String> {
     let start_tag = "<tool_call>";

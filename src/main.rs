@@ -1,5 +1,5 @@
 use async_openai::types::Role;
-use autogen_rust::conversable_agent::*;
+use autogen_rust::immutable_agent::*;
 use autogen_rust::llama_structs::*;
 use autogen_rust::message_store::*;
 // use autogen_rust::tool_call_actuators::*;
@@ -94,9 +94,9 @@ async fn main() -> Result<()> {
     ];
 
     for message in messages {
-        save_message(conn, "Agent1", message.clone(), "Agent2").await?;
+        save_message(&conn, "Agent1", message.clone(), "Agent2").await?;
     }
-    let messages = retrieve_messages(conn, "Agent1").await?;
+    let messages = retrieve_messages(&conn, "Agent1").await?;
     for message in messages {
         println!("{:?}", message);
     }
