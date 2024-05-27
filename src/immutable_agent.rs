@@ -9,6 +9,8 @@ use crate::{
     CODE_PYTHON_SYSTEM_MESSAGE,
     ITERATE_CODING_FAIL_TEMPLATE,
     ITERATE_CODING_SUCCESS_TEMPLATE,
+    ITERATE_CODING_START_TEMPLATE,
+    ITERATE_CODING_INCORRECT_TEMPLATE,
 };
 use anyhow;
 use async_openai::types::Role;
@@ -318,12 +320,10 @@ impl ImmutableAgent {
         user_message: &Message,
         conn: &Connection
     ) -> anyhow::Result<()> {
-        let user_prompt = format!(
-            "Here is the task for you: {:?}",
-            user_message.content_to_string()
-        );
+        let formatter = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
+        let user_prompt = formatter(&[&user_message.content_to_string()]);
 
-        let messages = vec![
+        let mut messages = vec![
             Message {
                 role: Role::System,
                 name: None,
@@ -335,53 +335,56 @@ impl ImmutableAgent {
                 content: Content::Text(user_prompt.clone()),
             }
         ];
-        let mut message_vec = messages.clone();
 
-        let output = chat_inner_async_llama(messages, 1000u16).await?;
+        for _ in 1..9 {
+            match chat_inner_async_llama(messages.clone(), 1000u16).await?.content {
+                Content::Text(_out) => {
+                    let (this_round_good, code, exec_result) = run_python_wrapper(&_out).await;
 
-        match &output.content {
-            Content::Text(_out) => {
-                let code = extract_code(_out);
-                let mut this_round_good = false;
-                let mut msg = String::new();
+                    if this_round_good {
+                        let (terminate_or_not, key_points) = self._is_termination(
+                            &exec_result,
+                            &user_prompt,
+                            conn
+                        ).await;
+                        if terminate_or_not {
+                            let result_message = Message {
+                                name: None,
+                                content: Content::Text(key_points),
+                                role: Role::Assistant,
+                            };
 
-                match run_python_capture(&code) {
-                    Ok(success_result_text) => {
-                        for _ in 1..3 {
-                            (this_round_good, msg, message_vec) = self.iterate_coding_success_case(
-                                &message_vec,
-                                &success_result_text,
-                                conn
+                            let _ = save_message(
+                                conn,
+                                "agent_name_holder",
+                                result_message,
+                                "user_proxy"
                             ).await;
-
-                            if this_round_good {
-                                break;
-                            } else {
-                                self.iterate_coding_error_case(&message_vec, &msg.clone()).await;
-                            }
+                            break;
                         }
                     }
-                    Err(err_msg) => {
-                        for _ in 1..9 {
-                            (this_round_good, msg, message_vec) = self.iterate_coding_error_case(
-                                &message_vec,
-                                &err_msg
-                            ).await;
 
-                            if this_round_good {
-                                break;
-                            } else {
-                                self.iterate_coding_error_case(&message_vec, &msg.clone()).await;
-                            }
-                        }
-                    }
+                    let formatter = if this_round_good {
+                        ITERATE_CODING_INCORRECT_TEMPLATE.lock().unwrap()
+                    } else {
+                        ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap()
+                    };
+
+                    let user_prompt = formatter(&[&code, &exec_result]);
+                    let result_message = Message {
+                        name: None,
+                        content: Content::Text(user_prompt),
+                        role: Role::User,
+                    };
+
+                    messages.push(result_message);
                 }
-            }
-            Content::ToolCall(call) => {
-                // let func = call.name;
-                // let args = call.arguments.unwrap_or_default();
-                // Execute the tool call function
-                // func(args);
+                Content::ToolCall(call) => {
+                    // let func = call.name;
+                    // let args = call.arguments.unwrap_or_default();
+                    // Execute the tool call function
+                    // func(args);
+                }
             }
         }
 
@@ -499,3 +502,54 @@ impl ImmutableAgent {
         // messages.last().cloned()
     }
 }
+
+pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
+    let code = extract_code(code_wrapped_in_text);
+    match run_python_capture(&code) {
+        Ok(success_result_text) => (true, code, success_result_text),
+
+        Err(err_msg) => (false, code, err_msg),
+    }
+}
+
+/* pub async fn _is_termination(
+    current_text_result: &str,
+    instruction: &str,
+    conn: &Connection
+) -> (bool, String) {
+    let user_prompt = format!(
+        "Given the task: {:?}, examine current result: {}, please decide whether the task is done or not",
+        instruction,
+        current_text_result
+    );
+
+    let messages = vec![
+        Message {
+            role: Role::System,
+            name: None,
+            content: Content::Text(IS_TERMINATION_SYSTEM_PROMPT.to_string()),
+        },
+        Message {
+            role: Role::User,
+            name: None,
+            content: Content::Text(user_prompt),
+        }
+    ];
+
+    let raw_reply = chat_inner_async_llama(messages, 300).await.expect("llm generation failure");
+
+    let (terminate_or_not, key_points) = parse_result_and_key_points(
+        &raw_reply.content_to_string()
+    );
+
+    let result_message = Message {
+        name: None,
+        content: Content::Text(key_points.clone()),
+        role: Role::Assistant,
+    };
+    if terminate_or_not {
+        let _ = save_message(conn, "agent_name_holder", result_message, "user_proxy").await;
+    }
+
+    (terminate_or_not, key_points)
+} */

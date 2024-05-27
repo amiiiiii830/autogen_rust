@@ -101,21 +101,29 @@ When you find an answer, verify the answer carefully. Include verifiable evidenc
     </tool_call>"#.to_string();
 
     pub static ref ITERATE_CODING_START_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
-        Mutex::new(
-            Box::new(|args: &[&str]| {
-                format!(
-                    "Based on the above, please provide an answer to the following user request: {}",
-                    args[0]
-                )
-            })
-        )
+        Mutex::new(Box::new(|args: &[&str]| { format!("Here is the task for you: {}", args[0]) }))
     );
+
+    pub static ref ITERATE_CODING_INVALID_TEMPLATE: String =
+        "Failed to create valid Python code".to_string();
 
     pub static ref ITERATE_CODING_SUCCESS_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
         Mutex::new(
             Box::new(|args: &[&str]| {
                 format!(
-                    "Successfully executed the code below:\n{}\n with the following result:\n{}",
+                    "Successfully executed the code below:\n{}\n producing the following result:\n{}",
+                    args[0],
+                    args[1]
+                )
+            })
+        )
+    );
+
+    pub static ref ITERATE_CODING_INCORRECT_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
+        Mutex::new(
+            Box::new(|args: &[&str]| {
+                format!(
+                    "Executed the code below:\n{}\n producing the following result, but the result is incorrect:\n{}",
                     args[0],
                     args[1]
                 )
@@ -127,8 +135,9 @@ When you find an answer, verify the answer carefully. Include verifiable evidenc
         Mutex::new(
             Box::new(|args: &[&str]| {
                 format!(
-                    "Failed while trying to execute the code, due to the following error:\n{}",
-                    args[0]
+                    "Failed to execute the code:\n{}, got the following errors:\n{}",
+                    args[0],
+                    args[1]
                 )
             })
         )
@@ -138,7 +147,7 @@ When you find an answer, verify the answer carefully. Include verifiable evidenc
         Mutex::new(
             Box::new(|args: &[&str]| {
                 format!(
-                    "Reminder: you are working towards solving the following task: {}. Here is a summary of your past tool calls and their results: {}",
+                    "Reminder: you are working towards solving the following task: {}. Here is a summary of the code iterations and their results: {}\nNow let's retry: take care not to repeat previous errors! Try to adopt different approaches.",
                     args[0],
                     args[1]
                 )
