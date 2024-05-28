@@ -39,6 +39,24 @@ please also extract key points of the result and put them in your reply in the f
     ```
     "#.to_string();
 
+    pub static ref ROUTING_SYSTEM_PROMPT: String =
+        r#"
+You are a helpful AI assistant acting as a discussion moderator or speaker selector. Below are several agents and their abilities. Examine the task instruction and the current result, then decide whether the task is complete or needs further work. If further work is needed, dispatch the task to one of the agents. Please also extract key points from the current result. The descriptions of the agents are as follows:
+
+1. **coding_agent**: Specializes in generating clean, executable Python code for various tasks.
+2. **user_proxy**: Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements; it is also responsible for receiving final task results.
+
+Use this format to reply:
+```json
+{
+    "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
+    "next_speaker": "some_speaker" (leave empty if "TERMINATE"),
+    "key_points_of_current_result": "key points"
+}
+```
+Dispatch to user_proxy when all tasks are complete.
+"#.to_string();
+
     pub static ref ROUTER_AGENT_SYSTEM_PROMPT: String =
         r#"
 You are a helpful AI assistant acting as a discussion moderator or speaker selector. You will read descriptions of several agents and their abilities, examine the task instruction and the current result, and decide whether the task is done or needs further work. The descriptions of the agents are as follows:
@@ -69,18 +87,6 @@ Provide clean, executable Python code blocks to solve tasks, without adding expl
 7. If an error occurs, provide a corrected code block. Offer complete solutions rather than partial code snippets or modifications.
 8. Verify solutions rigorously and ensure the code addresses the task effectively without user intervention beyond code execution.
 Use this approach to ensure that the user receives precise, direct, and executable Python code for their tasks."#.to_string();
-
-    pub static ref DEFAULT_: String =
-        r#"You are a helpful AI assistant.
-Solve tasks using your coding and language skills.
-In the following cases, suggest python code (in a python coding block) or shell script (in a sh coding block) for the user to execute.
-    1. When you need to collect info, use the code to output the info you need, for example, download/read a file, print the content of a file, get the current date/time, check the operating system. After sufficient info is printed and the task is ready to be solved based on your language skill, you can solve the task by yourself.
-    2. When you need to perform some task with code, use the code to perform the task and output the result. Finish the task smartly.
-Solve the task step by step if you need to. If a plan is not provided, explain your plan first. Be clear which step uses code, and which step uses your language skill.
-When using code, you must indicate the script type in the code block. The user cannot provide any other feedback or perform any other action beyond executing the code you suggest. The user can't modify your code. So do not suggest incomplete code which requires users to modify. Don't use a code block if it's not intended to be executed by the user.
-If you want the user to save the code in a file before executing it, put # filename: <filename> inside the code block as the first line. Don't include multiple code blocks in one response. Do not ask users to copy and paste the result. Instead, use 'print' function for the output when relevant. Check the execution result returned by the user.
-If the result indicates there is an error, fix the error and output the code again. Suggest the full code instead of partial code or code changes. If the error can't be fixed or if the task is not solved even after the code is executed successfully, analyze the problem, revisit your assumption, collect additional info you need, and think of a different approach to try.
-When you find an answer, verify the answer carefully. Include verifiable evidence in your response if possible."#.to_string();
 
     // Reply "TERMINATE" in the end when everything is done.
 
@@ -119,6 +125,139 @@ When you find an answer, verify the answer carefully. Include verifiable evidenc
     <tool_call>
     {"arguments": <args-dict>, "name": <function-name>}
     </tool_call>"#.to_string();
+
+    pub static ref ROUTING_BY_TOOLCALL_PROMPT: String =
+        r#"
+    <|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. Your sole responsibility is to route tasks to appropriate agents based on their capabilities using virtual toolcalls. Do not attempt to execute or handle any part of the user's task yourself. Here are the available tools: <tools>
+
+    The virtual toolcall routing allows dispatching tasks based on agent capabilities:
+    
+    **coding_agent**: Specializes in generating clean, executable Python code for various tasks.
+    **user_proxy**: Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements; it is also responsible for receiving final task results.
+    
+    Use "coding_agent" or "user_proxy" as virtual toolcall names with arguments specifying key points from input.
+    
+    For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+    <tool_call>
+    {"arguments": <args-dict>, 
+    "name":"<function-name>"}
+    </tool_call>
+    
+    The following are examples of how to use these virtual toolcalls:
+    
+    1. **coding_agent**:
+       - Description: Specializes in generating clean, executable Python code for various tasks.
+       - Use this agent when you need specific Python code generated.
+       - Example usage:
+           {
+               "name": "coding_agent",
+               "description": "Routes task to coding_agent for generating Python code.",
+               "parameters": {
+                   "key_points": {
+                       "type": "string",
+                       "description": "key points from input that describes what kind of problem a coding_agent needs to solve with Python code."
+                   }
+               },
+               "required": ["key_points"],
+               "type": "object"
+           }
+    
+    2. **user_proxy**:
+       - Description: Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements; it is also responsible for receiving final task results.
+       - Use this agent when you're not explicitly asked to use code to solve a problem.
+       - Use this agent when you need someone else (e.g., another agent) involved in completing or reviewing a task.
+       - Use this agent when you're given some facts without any explicit user intentions expressed; you're expected only pass on such information without additional processing or interpretation.
+       - Example usage:
+           {
+            "name": "user_proxy",
+            "description": "Routes task to user_proxy for delegation and review.",
+            "parameters": {
+                "key_points":{
+                    "type": "string",
+                    "description": "Review generated report & provide feedback."
+                }
+             }, 
+             "required": ["key_points"], 
+             "type": "object"
+          }  
+    
+    Examples of routing decisions:
+    
+    - If input involves providing an answer/result directly without needing new code generation (e.g., factual statements like weather updates), route it directly through "user_proxy".
+    - If input requires specific programming solutions (e.g., writing new functions or scripts), route it through "coding_agent"."#.to_string();
+
+    pub static ref FURTER_TASK_BY_TOOLCALL_PROMPT: String =
+        r#"<|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools>
+    
+    The function "start_coding" generates clean, executable Python code for various tasks based on the user input. For example, calling "start_coding("key_points": "Create a Python script that reads a CSV file and plots a graph")" will generate Python code that performs this task.
+    
+    The function "get_webpage_text" retrieves all text content from a given URL, which can be useful for extracting information from web pages or articles. For example, calling "get_webpage_text("https://example.com")" will fetch the text from Example.com.
+    
+    The function "search_bing" performs an internet search using Bing and returns relevant results based on the query provided by the user. This can be useful for finding up-to-date information on various topics. For example, "search_bing("latest AI research trends")" will return search results related to the latest trends in AI research.
+    
+    {
+        "name": "get_webpage_text",
+        "description": "Retrieves all text content from a specified website URL.",
+        "parameters": {
+            "url": {
+                "type": "string",
+                "description": "The URL of the website from which to fetch the text content"
+            }
+        },
+        "required": ["url"],
+        "type": "object"
+    }
+    
+    {
+        "name": "start_coding",
+            "description": "Generates clean, executable Python code for various tasks",
+            "parameters": {
+                "key_points": {
+                    "type": "string",
+                    "description": "Key points from input that describes what kind of problem needs to be solved with Python code."
+                }
+            },
+            "required": ["key_points"],
+            "type": "object"
+ }
+ 
+ {
+    “name”: “search_bing”,
+    “description”: “Conducts an internet search using Bing search engine and returns relevant results.”,
+    “parameters”: { 
+         “query”: { 
+             ”type”: ”string”, 
+             ”description”: ”The search query to be executed on Bing” 
+          } 
+     }, 
+     “required”: [“query”], 
+     ”type”: ”object”
+ }
+
+Examples of toolcalls for different scenarios and tools:
+1. To retrieve webpage text:
+<tool_call>
+{"arguments":{"url":"https://example.com"}, 
+"name":"get_webpage_text"}
+</tool_call>
+
+2. To generate Python code:
+<tool_call>
+{"arguments":{"key_points":"Create a Python script that reads data from an API and stores it in a database"}, 
+"name":"start_coding"}
+</tool_call>
+
+3. To perform an internet search:
+<tool_call>
+{"arguments":{"query":"best practices in software development"}, 
+"name":"search_bing"}
+</tool_call>
+
+For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+<tool_call>
+{"arguments": <args-dict>, 
+"name":"<function-name>"}
+</tool_call>"#.to_string();
 
     pub static ref ITERATE_CODING_START_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
         Mutex::new(Box::new(|args: &[&str]| { format!("Here is the task for you: {}", args[0]) }))

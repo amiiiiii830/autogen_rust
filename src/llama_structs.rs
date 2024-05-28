@@ -65,6 +65,7 @@ pub fn output_llama_response(
     let role = msg_obj.clone().role;
     if let Some(data) = msg_obj.content {
         if let Some(json_str) = extract_json_from_xml_like(&data) {
+            println!("{:?}", json_str.clone());
             let tool_call: ToolCall = serde_json::from_str(&json_str).unwrap();
             return Some(LlamaResponseMessage {
                 content: Content::ToolCall(tool_call),

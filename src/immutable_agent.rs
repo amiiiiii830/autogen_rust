@@ -3,18 +3,22 @@ use crate::exec_python::*;
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
 use crate::message_store::*;
+use crate::webscraper_hook::get_webpage_text;
+use crate::webscraper_hook::search_bing;
 use crate::{
-    ROUTER_AGENT_SYSTEM_PROMPT,
+    ROUTING_SYSTEM_PROMPT,
     IS_TERMINATION_SYSTEM_PROMPT,
     CODE_PYTHON_SYSTEM_MESSAGE,
     ITERATE_CODING_FAIL_TEMPLATE,
     ITERATE_CODING_START_TEMPLATE,
     ITERATE_CODING_INCORRECT_TEMPLATE,
     USER_PROXY_SYSTEM_PROMPT,
+    FURTER_TASK_BY_TOOLCALL_PROMPT,
 };
 use anyhow;
 use async_openai::types::Role;
 use rusqlite::Connection;
+use rustpython_vm::stdlib::errno::errors::exit;
 use serde::{ Deserialize, Serialize };
 use serde_json::{ Value };
 use regex::Regex;
@@ -126,16 +130,6 @@ impl ImmutableAgent {
         }
     }
 
-    pub fn router_agent(llm_config: Option<Value>, tools_map_meta: &str) -> Self {
-        ImmutableAgent {
-            name: "router_agent".to_string(),
-            system_prompt: ROUTER_AGENT_SYSTEM_PROMPT.to_string(),
-            llm_config,
-            tools_map_meta: tools_map_meta.to_string(),
-            description: "Efficiently manages and directs tasks to appropriate agents based on evaluation criteria.".to_string(),
-        }
-    }
-
     pub fn coding_agent(llm_config: Option<Value>, tools_map_meta: &str) -> Self {
         ImmutableAgent {
             name: "coding_agent".to_string(),
@@ -161,18 +155,78 @@ impl ImmutableAgent {
     }
 
     pub async fn receive_message(&self, conn: &Connection) -> Option<String> {
-        let next_speaker = get_next_speaker_db(conn).await.ok()?;
-        if next_speaker == self.name {
-            let message = retrieve_most_recent_message(conn, &self.name).await.ok()?;
-            Some(message.content_to_string())
-        } else {
-            None
-        }
+        retrieve_most_recent_message(conn, &self.name).await
     }
 
-    pub async fn run(&self, conn: &Connection) -> anyhow::Result<()> {
+    pub async fn furter_task_by_toolcall(&self, input: &str, conn: &Connection) -> Option<String> {
+        let messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(FURTER_TASK_BY_TOOLCALL_PROMPT.to_string()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(input.to_owned()),
+            }
+        ];
+
+        let max_token = 1000u16;
+        let output: LlamaResponseMessage = chat_inner_async_llama(
+            messages.clone(),
+            max_token
+        ).await.expect("Failed to generate reply");
+
+        match &output.content {
+            Content::Text(_) => {
+                todo!();
+            }
+            Content::ToolCall(call) => {
+                let args = call.clone().arguments.unwrap_or_default();
+
+                let res = match call.name.as_str() {
+                    "get_webpage_text" => {
+                        let url = args
+                            .get("url")
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'url' argument")).ok()?
+                            .to_string();
+
+                        get_webpage_text(url).await.ok()?
+                    }
+                    "search_bing" => {
+                        let query = args
+                            .get("query")
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument")).ok()?
+                            .to_string();
+                        search_bing(&query).await.ok()?
+                    }
+                    "start_coding" => {
+                        let key_points = args
+                            .get("key_points")
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'key_points' argument")).ok()?
+                            .to_string();
+                        let _ = self.start_coding(&key_points, conn).await;
+
+                        String::from("code is being generated")
+                    }
+                    _ => panic!(),
+                };
+                return Some(res);
+            }
+        }
+        None
+    }
+
+    pub async fn run(&self, conn: &Connection, stop_toggle: bool) -> anyhow::Result<()> {
         match self.receive_message(conn).await {
-            Some(message_text) => self.a_generate_reply(&message_text, conn).await,
+            Some(message_text) => {
+                let stop = self.a_generate_reply(&message_text, conn).await?;
+                if stop_toggle && stop {
+                    std::process::exit(0);
+                }
+                Ok(())
+            }
             None => Ok(()),
         }
     }
@@ -181,7 +235,7 @@ impl ImmutableAgent {
         &self,
         content_text: &str,
         conn: &Connection
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let user_prompt = format!("Here is the task for you: {:?}", content_text);
 
         let messages = vec![
@@ -215,7 +269,15 @@ impl ImmutableAgent {
                     &user_prompt,
                     conn
                 ).await;
+
+                println!(
+                    "terminate?: {:?}, speaker: {:?}, points: {:?}\n",
+                    terminate_or_not.clone(),
+                    next_speaker.clone(),
+                    key_points.clone()
+                );
                 let _ = save_message(conn, &self.name, message.clone(), &next_speaker).await;
+                return Ok(terminate_or_not);
                 // messages.push(message);
             }
             Content::ToolCall(_call) => {
@@ -225,7 +287,7 @@ impl ImmutableAgent {
                 // func(args);
             }
         }
-        Ok(())
+        Ok(false)
         // Some(messages)
     }
 
@@ -235,27 +297,33 @@ impl ImmutableAgent {
         instruction: &str,
         conn: &Connection
     ) -> (bool, String, String) {
-        let user_prompt = match get_agent_names_and_abilities(conn).await {
-            Err(_) =>
-                format!(
-                    "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
-                    instruction,
-                    current_text_result
-                ),
-            Ok(c) =>
-                format!(
-                    "Here are the list of agents and their abilities: {:?}, examine current result: {} against the task {:?}, please decide which is the next speaker to handle",
-                    c,
-                    instruction,
-                    current_text_result
-                ),
-        };
+        let user_prompt = format!(
+            "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
+            instruction,
+            current_text_result
+        );
+
+        // let user_prompt = match get_agent_names_and_abilities(conn).await {
+        //     Err(_) =>
+        //         format!(
+        //             "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
+        //             instruction,
+        //             current_text_result
+        //         ),
+        //     Ok(c) =>
+        //         format!(
+        //             "Here are the list of agents and their abilities: {:?}, examine current result: {} against the task {:?}, please decide which is the next speaker to handle",
+        //             c,
+        //             instruction,
+        //             current_text_result
+        //         ),
+        // };
 
         let messages = vec![
             Message {
                 role: Role::System,
                 name: None,
-                content: Content::Text(self.system_prompt.clone()),
+                content: Content::Text(ROUTING_SYSTEM_PROMPT.to_string()),
             },
             Message {
                 role: Role::User,
@@ -267,7 +335,7 @@ impl ImmutableAgent {
         let raw_reply = chat_inner_async_llama(messages, 100).await.expect(
             "llm generation failure"
         );
-
+        println!("{:?}", raw_reply.content_to_string().clone());
         parse_next_speaker(&raw_reply.content_to_string())
     }
 
@@ -321,11 +389,11 @@ impl ImmutableAgent {
 
     pub async fn start_coding(
         &self,
-        user_message: &Message,
+        message_text: &str,
         conn: &Connection
     ) -> anyhow::Result<()> {
         let formatter = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
-        let user_prompt = formatter(&[&user_message.content_to_string()]);
+        let user_prompt = formatter(&[message_text]);
 
         let mut messages = vec![
             Message {

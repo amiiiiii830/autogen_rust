@@ -1,7 +1,7 @@
 use crate::immutable_agent::*;
 use crate::llama_structs::*;
 use async_openai::types::Role;
-use rusqlite::{params, Connection, Result};
+use rusqlite::{ params, Connection, Result };
 
 trait RoleToString {
     fn to_string(&self) -> String;
@@ -50,11 +50,7 @@ impl From<NaiveMessage> for Message {
     fn from(naive: NaiveMessage) -> Self {
         let content = if naive.content.starts_with("toolcall:") {
             // Assuming a specific format for ToolCall
-            let tool_name = naive
-                .content
-                .strip_prefix("toolcall:")
-                .unwrap_or("")
-                .to_string();
+            let tool_name = naive.content.strip_prefix("toolcall:").unwrap_or("").to_string();
             Content::ToolCall(ToolCall {
                 name: tool_name,
                 arguments: None,
@@ -107,13 +103,15 @@ pub async fn create_message_store_table(conn: &Connection) -> Result<()> {
             tokens_count INTEGER,
             next_speaker TEXT
         )",
-        [],
+        []
     )?;
     Ok(())
 }
 
 pub async fn retrieve_messages(conn: &Connection, agent_name: &str) -> Result<Vec<Message>> {
-    let mut stmt = conn.prepare("SELECT message_content, message_role, message_context FROM GroupChat WHERE agent_name = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT message_content, message_role, message_context FROM GroupChat WHERE agent_name = ?1"
+    )?;
     let rows = stmt.query_map(params![agent_name], |row| {
         Ok(Message {
             content: Content::Text(row.get::<_, String>(0)?), // Specify type as String
@@ -129,42 +127,39 @@ pub async fn retrieve_messages(conn: &Connection, agent_name: &str) -> Result<Ve
     Ok(messages)
 }
 
-pub async fn retrieve_most_recent_message(conn: &Connection, agent_name: &str) -> Result<Message> {
-    let mut stmt = conn.prepare("SELECT message_content, message_role, message_context FROM GroupChat WHERE agent_name = ?1 ORDER BY id DESC LIMIT 1")?;
-    let next_speaker = get_next_speaker_db(conn).await?;
+pub async fn retrieve_most_recent_message(conn: &Connection, agent_name: &str) -> Option<String> {
+    let mut stmt = conn
+        .prepare("SELECT message_context, next_speaker FROM GroupChat ORDER BY id DESC LIMIT 1")
+        .ok()?;
 
-    let row = stmt.query_row(params![agent_name], |row| {
-        Ok(Message {
-            content: Content::Text(row.get::<_, String>(0)?), // Specify type as String
-            role: Role::from_str(&row.get::<_, String>(1)?), // Specify type as String and use from_str
-            name: Some(agent_name.to_owned()),
+    let result = stmt
+        .query_row(params![], |row| {
+            let content: String = row.get(0)?;
+            let speaker: String = row.get(1)?;
+
+            if speaker == agent_name {
+                Ok(Some(content))
+            } else {
+                Ok(None)
+            }
         })
-    });
+        .ok()?;
 
-    match row {
-        Ok(message) => match next_speaker == agent_name {
-            true => Ok(message),
-
-            false => Err(rusqlite::Error::QueryReturnedNoRows),
-        },
-        Err(rusqlite::Error::QueryReturnedNoRows) => Err(rusqlite::Error::QueryReturnedNoRows),
-        Err(e) => Err(e),
-    }
+    result
 }
 
 pub async fn save_message(
     conn: &Connection,
     agent_name: &str,
     message: Message,
-    next_speaker: &str,
+    next_speaker: &str
 ) -> Result<()> {
-    let tokens_count = message
-        .content_to_string().split_whitespace().count();
+    let tokens_count = message.content_to_string().split_whitespace().count();
 
     let naive_message = NaiveMessage::from(message);
     conn.execute(
         "INSERT INTO GroupChat (agent_name, message_content, message_role, tokens_count, next_speaker) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![agent_name, naive_message.content, naive_message.role, tokens_count, next_speaker],
+        params![agent_name, naive_message.content, naive_message.role, tokens_count, next_speaker]
     )?;
     Ok(())
 }
@@ -197,7 +192,7 @@ pub async fn create_agent_store_table(conn: &Connection) -> Result<()> {
             recent_instruction TEXT,
             tools_map_meta TEXT
         )",
-        [],
+        []
     )?;
     Ok(())
 }
@@ -207,11 +202,11 @@ pub async fn register_agent(
     agent_name: &str,
     agent_description: &str,
     system_prompt: &str,
-    tools_map_meta: &str,
+    tools_map_meta: &str
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO AgentStore (agent_name, agent_description, current_system_prompt, tools_map_meta) VALUES (?1, ?2, ?3, ?4)",
-        params![agent_name, agent_description, system_prompt, tools_map_meta],
+        params![agent_name, agent_description, system_prompt, tools_map_meta]
     )?;
     Ok(())
 }
@@ -219,11 +214,13 @@ pub async fn register_agent(
 pub async fn get_agent_names_and_abilities(conn: &Connection) -> Result<String> {
     let mut stmt = conn.prepare("SELECT agent_name, agent_description FROM AgentStore")?;
     let rows = stmt.query_map([], |row| {
-        Ok(format!(
-            "agent_name: {:?}, abilities: {:?}",
-            &row.get::<_, String>(0)?,
-            &row.get::<_, String>(1)?
-        )) // Specify type as String
+        Ok(
+            format!(
+                "agent_name: {:?}, abilities: {:?}",
+                &row.get::<_, String>(0)?,
+                &row.get::<_, String>(1)?
+            )
+        ) // Specify type as String
     })?;
 
     let mut agent_names = String::new();
@@ -236,18 +233,19 @@ pub async fn get_agent_names_and_abilities(conn: &Connection) -> Result<String> 
 pub async fn update_system_prompt_db(
     conn: &Connection,
     agent_name: &str,
-    new_prompt: &str,
+    new_prompt: &str
 ) -> Result<()> {
     conn.execute(
         "UPDATE AgentStore SET current_system_prompt = ?1 WHERE agent_name = ?2",
-        params![new_prompt, agent_name],
+        params![new_prompt, agent_name]
     )?;
     Ok(())
 }
 
 pub async fn get_system_prompt_db(conn: &Connection, agent_name: &str) -> Result<String> {
-    let mut stmt =
-        conn.prepare("SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1"
+    )?;
     let mut rows = stmt.query(params![agent_name])?;
 
     if let Some(row) = rows.next()? {
@@ -271,8 +269,9 @@ pub async fn get_tools_meta_db(conn: &Connection, agent_name: &str) -> Result<St
 }
 
 pub async fn get_system_message_db(conn: &Connection, agent_name: &str) -> Result<Message> {
-    let mut stmt =
-        conn.prepare("SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1"
+    )?;
     let mut rows = stmt.query(params![agent_name])?;
 
     if let Some(row) = rows.next()? {
@@ -290,18 +289,17 @@ pub async fn get_system_message_db(conn: &Connection, agent_name: &str) -> Resul
 pub async fn save_recent_instruction(
     conn: &Connection,
     agent_name: &str,
-    recent_instruction: &str,
+    recent_instruction: &str
 ) -> Result<()> {
     conn.execute(
         "UPDATE AgentStore SET recent_instruction = ?1 WHERE agent_name = ?2",
-        params![recent_instruction, agent_name],
+        params![recent_instruction, agent_name]
     )?;
     Ok(())
 }
 
 pub async fn recent_instruction_db(conn: &Connection, agent_name: &str) -> Result<String> {
-    let mut stmt =
-        conn.prepare("SELECT recent_instruction FROM AgentStore WHERE agent_name = ?1")?;
+    let mut stmt = conn.prepare("SELECT recent_instruction FROM AgentStore WHERE agent_name = ?1")?;
     let mut rows = stmt.query(params![agent_name])?;
 
     if let Some(row) = rows.next()? {

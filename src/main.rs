@@ -62,28 +62,28 @@ async fn main() -> Result<()> {
     // conn.execute("DELETE FROM GroupChat", [])?;
 
     let coding_agent = ImmutableAgent::coding_agent(None, "tools_map_meta_placeholder");
-    let router_agent = ImmutableAgent::router_agent(None, "tools_map_meta_placeholder");
     let user_proxy = ImmutableAgent::user_proxy(None, "tools_map_meta_placeholder");
 
     let message: Message = Message::new(
-        Content::Text("caculate prime number up to 100".to_string()),
+        Content::Text("find fibonacci up to 15".to_string()),
         Some("random".to_string()),
         Role::User
     );
 
-    let code = coding_agent.start_coding(&message, &conn).await?;
+    // let code = coding_agent.start_coding(&message, &conn).await?;
 
-    for _ in 1..9 {
-        user_proxy.send(message.clone(), &conn, Some("router_agent")).await;
-        user_proxy.run(&conn).await;
-        router_agent.run(&conn).await;
-        coding_agent.run(&conn).await;
+   let res  = coding_agent.furter_task_by_toolcall("find fibonacci up to 15 with python code", &conn).await.unwrap();
 
-        // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
+    // for _ in 1..9 {
+    //     user_proxy.send(message.clone(), &conn, Some("coding_agent")).await;
+    //     coding_agent.run(&conn, false).await;
+    //     user_proxy.run(&conn, true).await;
 
-        // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
-    }
-    // println!("{:?}", code);
+    //     // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
+
+    //     // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
+    // }
+    println!("{:?}", res);
 
     // let messages = vec![
     //     Message {
