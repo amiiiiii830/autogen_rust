@@ -6,7 +6,6 @@ use rustpython_vm as vm;
 
 pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
     let code = extract_code(code_wrapped_in_text);
-    println!("code: {}", code.clone());
 
     match run_python_capture(&code) {
         Ok(success_result_text) => (true, code, success_result_text),

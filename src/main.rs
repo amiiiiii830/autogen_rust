@@ -67,13 +67,12 @@ async fn main() -> Result<()> {
         "an iterative python coder"
     );
     let message: Message = Message::new(
-        Content::Text("create code to calculate prime numbers below 100".to_string()),
+        Content::Text("creat a text based tick-tack-toe game".to_string()),
         Some("random".to_string()),
         Role::User
     );
 
 
-    coding_agent.start_coding(&message, &conn).await;
     let code = coding_agent.start_coding(&message, &conn).await?;
     // println!("{:?}", code);
 

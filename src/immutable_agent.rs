@@ -53,7 +53,7 @@ pub fn parse_result_and_key_points(input: &str) -> (bool, String) {
     let continue_to_work_or_end_regex = Regex::new(
         r#""continue_to_work_or_end":\s*"([^"]*)""#
     ).unwrap();
-    let next_speaker_regex = Regex::new(r#""key_points":\s*"([^"]*)""#).unwrap();
+    let next_speaker_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
 
     let continue_to_work_or_end = continue_to_work_or_end_regex
         .captures(&json_str)
@@ -254,6 +254,7 @@ impl ImmutableAgent {
             current_text_result
         );
 
+        println!("{:?}", user_prompt.clone());
         let messages = vec![
             Message {
                 role: Role::System,
@@ -270,6 +271,8 @@ impl ImmutableAgent {
         let raw_reply = chat_inner_async_llama(messages, 300).await.expect(
             "llm generation failure"
         );
+
+        println!("raw_reply: {:?}", raw_reply.content_to_string());
 
         let (terminate_or_not, key_points) = parse_result_and_key_points(
             &raw_reply.content_to_string()
@@ -307,13 +310,15 @@ impl ImmutableAgent {
                 content: Content::Text(user_prompt.clone()),
             }
         ];
-
         for n in 1..9 {
+            println!("Iteration: {}", n);
             match chat_inner_async_llama(messages.clone(), 1000u16).await?.content {
                 Content::Text(_out) => {
                     // let head: String = _out.chars().take(200).collect::<String>();
-                    println!("Head {n}: {}\n", _out.clone());
+                    println!("Raw generation {n}:\n {}\n\n", _out.clone());
                     let (this_round_good, code, exec_result) = run_python_wrapper(&_out).await;
+                    println!("code:\n{}\n\n", code.clone());
+                    println!("Run result {n}: {}\n", exec_result.clone());
 
                     if this_round_good {
                         let (terminate_or_not, key_points) = self._is_termination(
@@ -321,6 +326,7 @@ impl ImmutableAgent {
                             &user_prompt,
                             conn
                         ).await;
+                        println!("Termination Check: {}", terminate_or_not);
                         if terminate_or_not {
                             println!("key_points:{:?}", key_points);
                             let result_message = Message {
@@ -362,8 +368,6 @@ impl ImmutableAgent {
                 }
             }
         }
-
         Ok(())
     }
 }
-
