@@ -75,16 +75,13 @@ async fn main() -> Result<()> {
 
     for _ in 1..9 {
         user_proxy.send(message.clone(), &conn, Some("router_agent")).await;
-         user_proxy.receive_message(&conn).await;
-       router_agent.receive_message(&conn).await;
-        coding_agent.receive_message(&conn).await;
-
+        user_proxy.run(&conn).await;
+        router_agent.run(&conn).await;
+        coding_agent.run(&conn).await;
 
         // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
 
-
         // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
-
     }
     // println!("{:?}", code);
 

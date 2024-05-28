@@ -19,7 +19,7 @@ use serde::{ Deserialize, Serialize };
 use serde_json::{ Value };
 use regex::Regex;
 
-pub fn parse_next_speaker(input: &str) -> (String, String) {
+pub fn parse_next_speaker(input: &str) -> (bool, String, String) {
     let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
     let json_str = json_regex
         .captures(input)
@@ -29,19 +29,24 @@ pub fn parse_next_speaker(input: &str) -> (String, String) {
     let continue_to_work_or_end_regex = Regex::new(
         r#""continue_to_work_or_end":\s*"([^"]*)""#
     ).unwrap();
-    let next_speaker_regex = Regex::new(r#""next_speaker":\s*"([^"]*)""#).unwrap();
-
     let continue_to_work_or_end = continue_to_work_or_end_regex
         .captures(&json_str)
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
 
+    let next_speaker_regex = Regex::new(r#""next_speaker":\s*"([^"]*)""#).unwrap();
     let next_speaker = next_speaker_regex
         .captures(&json_str)
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
 
-    (continue_to_work_or_end, next_speaker)
+    let key_points_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
+    let key_points = key_points_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    (&continue_to_work_or_end == "TERMINATE", next_speaker, key_points)
 }
 
 pub fn parse_result_and_key_points(input: &str) -> (bool, String) {
@@ -155,23 +160,31 @@ impl ImmutableAgent {
         let _ = save_message(conn, &self.name, message, next_speaker.unwrap()).await;
     }
 
-    pub async fn receive_message(&self, conn: &Connection) -> Option<Message> {
+    pub async fn receive_message(&self, conn: &Connection) -> Option<String> {
         let next_speaker = get_next_speaker_db(conn).await.ok()?;
         if next_speaker == self.name {
-            retrieve_most_recent_message(conn, &self.name).await.ok()
+            let message = retrieve_most_recent_message(conn, &self.name).await.ok()?;
+            Some(message.content_to_string())
         } else {
             None
         }
     }
 
+    pub async fn run(&self, conn: &Connection) -> anyhow::Result<()> {
+        match self.receive_message(conn).await {
+            Some(message_text) => self.a_generate_reply(&message_text, conn).await,
+            None => Ok(()),
+        }
+    }
+
     pub async fn a_generate_reply(
         &self,
-        message: &Message,
+        content_text: &str,
         conn: &Connection
-    ) -> Option<Vec<Message>> {
-        let user_prompt = format!("Here is the task for you: {:?}", message.content_to_string());
+    ) -> anyhow::Result<()> {
+        let user_prompt = format!("Here is the task for you: {:?}", content_text);
 
-        let mut messages = vec![
+        let messages = vec![
             Message {
                 role: Role::System,
                 name: None,
@@ -185,29 +198,25 @@ impl ImmutableAgent {
         ];
 
         let max_token = 1000u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token).await.expect(
-            "Failed to generate reply"
-        );
+        let output: LlamaResponseMessage = chat_inner_async_llama(
+            messages.clone(),
+            max_token
+        ).await.expect("Failed to generate reply");
 
         match &output.content {
             Content::Text(_out) => {
                 let message = Message {
                     name: None,
-                    content: output.content,
+                    content: output.content.clone(),
                     role: Role::Assistant,
                 };
-                let (terminate_or_not, next_speaker) = self.assign_next_speaker(
-                    &message,
+                let (terminate_or_not, next_speaker, key_points) = self.assign_next_speaker(
+                    &_out,
                     &user_prompt,
                     conn
                 ).await;
-                let _ = save_message(
-                    conn,
-                    &self.name,
-                    message.clone(),
-                    &next_speaker.unwrap_or("router_agent".to_string())
-                ).await;
-                messages.push(message);
+                let _ = save_message(conn, &self.name, message.clone(), &next_speaker).await;
+                // messages.push(message);
             }
             Content::ToolCall(_call) => {
                 // let func = call.name;
@@ -216,29 +225,29 @@ impl ImmutableAgent {
                 // func(args);
             }
         }
-
-        Some(messages)
+        Ok(())
+        // Some(messages)
     }
 
     pub async fn assign_next_speaker(
         &self,
-        message: &Message,
+        current_text_result: &str,
         instruction: &str,
         conn: &Connection
-    ) -> (bool, Option<String>) {
+    ) -> (bool, String, String) {
         let user_prompt = match get_agent_names_and_abilities(conn).await {
             Err(_) =>
                 format!(
                     "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
                     instruction,
-                    message.content_to_string()
+                    current_text_result
                 ),
             Ok(c) =>
                 format!(
                     "Here are the list of agents and their abilities: {:?}, examine current result: {} against the task {:?}, please decide which is the next speaker to handle",
                     c,
                     instruction,
-                    message.content_to_string()
+                    current_text_result
                 ),
         };
 
@@ -259,17 +268,9 @@ impl ImmutableAgent {
             "llm generation failure"
         );
 
-        let (terminate_or_not, next_speaker) = parse_next_speaker(&raw_reply.content_to_string());
-
-        match terminate_or_not == "TERMINATE" {
-            true => (true, None),
-            false => {
-                let _ = save_message(conn, &self.name, message.clone(), &next_speaker).await;
-
-                (false, Some(next_speaker.to_string()))
-            }
-        }
+        parse_next_speaker(&raw_reply.content_to_string())
     }
+
     pub async fn _is_termination(
         &self,
         current_text_result: &str,
