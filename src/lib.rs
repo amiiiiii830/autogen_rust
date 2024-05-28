@@ -14,6 +14,20 @@ use std::sync::{ Arc, Mutex };
 type FormatterFn = Box<dyn (Fn(&[&str]) -> String) + Send + Sync>;
 
 lazy_static! {
+    pub static ref USER_PROXY_SYSTEM_PROMPT: String =
+        r#"
+        You are a helpful AI assistant acting as the user's proxy. You act according to these rules:
+1. When you receive an instruction from the user, you dispatch the task to an agent in the pool of agents.
+2. When you receive agent's answer, you will judge whether the task has been completed, if not done, dispatch it to an agent to further work on it. If done, mark it as "TERMINATE" and save the result for view by the user.
+please also extract key points of the result and put them in your reply in the following format:
+    ```json
+    {
+        "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
+        "key_points_of_current_result": "key points"
+    }
+    ```
+    "#.to_string();
+
     pub static ref IS_TERMINATION_SYSTEM_PROMPT: String =
         r#"
     You are a helpful AI assistant acting as a gatekeeper in a project. You will be given a task instruction and the current result, please decide whether the task is done or not, please also extract key points of current result and put them in your reply in the following format:
@@ -27,13 +41,19 @@ lazy_static! {
 
     pub static ref ROUTER_AGENT_SYSTEM_PROMPT: String =
         r#"
-    You are a helpful AI assistant acting as a discussion moderator or speaker selector. You will read descriptions of several agents and their abilities, examine the task instruction and the current result, and decide whether the task is done or needs further work. Use the following format to reply:
-    ```json
-    {
-        "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
-        "next_speaker": "some_speaker" or empty in case "TERMINATE" in the previous field
-    }
-    ```
+You are a helpful AI assistant acting as a discussion moderator or speaker selector. You will read descriptions of several agents and their abilities, examine the task instruction and the current result, and decide whether the task is done or needs further work. The descriptions of the agents are as follows:
+
+1. **router_agent**: Efficiently manages and directs tasks to appropriate agents based on evaluation criteria.
+2. **coding_agent**: Specializes in generating clean, executable Python code for various tasks.
+3. **user_proxy**: Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements.
+        
+Use the following format to reply:
+```json
+{
+    "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
+    "next_speaker": "some_speaker" or empty in case "TERMINATE" in the previous field
+}
+```
     "#.to_string();
     // Follow these guidelines:"#.to_string();
 
@@ -166,5 +186,3 @@ When you find an answer, verify the answer carefully. Include verifiable evidenc
         )
     );
 }
-
-

@@ -10,6 +10,7 @@ use crate::{
     ITERATE_CODING_FAIL_TEMPLATE,
     ITERATE_CODING_START_TEMPLATE,
     ITERATE_CODING_INCORRECT_TEMPLATE,
+    USER_PROXY_SYSTEM_PROMPT,
 };
 use anyhow;
 use async_openai::types::Role;
@@ -126,7 +127,27 @@ impl ImmutableAgent {
             system_prompt: ROUTER_AGENT_SYSTEM_PROMPT.to_string(),
             llm_config,
             tools_map_meta: tools_map_meta.to_string(),
-            description: "router agent".to_string(),
+            description: "Efficiently manages and directs tasks to appropriate agents based on evaluation criteria.".to_string(),
+        }
+    }
+
+    pub fn coding_agent(llm_config: Option<Value>, tools_map_meta: &str) -> Self {
+        ImmutableAgent {
+            name: "coding_agent".to_string(),
+            system_prompt: CODE_PYTHON_SYSTEM_MESSAGE.to_string(),
+            llm_config,
+            tools_map_meta: tools_map_meta.to_string(),
+            description: "Specializes in generating clean, executable Python code for various tasks.".to_string(),
+        }
+    }
+
+    pub fn user_proxy(llm_config: Option<Value>, tools_map_meta: &str) -> Self {
+        ImmutableAgent {
+            name: "user_proxy".to_string(),
+            system_prompt: USER_PROXY_SYSTEM_PROMPT.to_string(),
+            llm_config,
+            tools_map_meta: tools_map_meta.to_string(),
+            description: "Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements".to_string(),
         }
     }
 
@@ -145,16 +166,26 @@ impl ImmutableAgent {
 
     pub async fn a_generate_reply(
         &self,
-        messages: Vec<Message>,
+        message: &Message,
         conn: &Connection
     ) -> Option<Vec<Message>> {
-        let mut message_vec = messages.clone();
-        let user_prompt = match messages.clone().get(1) {
-            Some(p) => p.content_to_string(),
-            None => String::new(),
-        };
+        let user_prompt = format!("Here is the task for you: {:?}", message.content_to_string());
+
+        let mut messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(self.system_prompt.clone()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(user_prompt.clone()),
+            }
+        ];
+
         let max_token = 1000u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(messages, max_token).await.expect(
+        let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token).await.expect(
             "Failed to generate reply"
         );
 
@@ -163,23 +194,20 @@ impl ImmutableAgent {
                 let message = Message {
                     name: None,
                     content: output.content,
-                    role: Role::User,
+                    role: Role::Assistant,
                 };
                 let (terminate_or_not, next_speaker) = self.assign_next_speaker(
                     &message,
                     &user_prompt,
                     conn
                 ).await;
-                if terminate_or_not {
-                } else {
-                    let _ = save_message(
-                        conn,
-                        &self.name,
-                        message.clone(),
-                        &next_speaker.unwrap_or("placeholder".to_string())
-                    ).await;
-                    message_vec.push(message);
-                }
+                let _ = save_message(
+                    conn,
+                    &self.name,
+                    message.clone(),
+                    &next_speaker.unwrap_or("router_agent".to_string())
+                ).await;
+                messages.push(message);
             }
             Content::ToolCall(_call) => {
                 // let func = call.name;
@@ -189,7 +217,7 @@ impl ImmutableAgent {
             }
         }
 
-        Some(message_vec)
+        Some(messages)
     }
 
     pub async fn assign_next_speaker(
@@ -337,7 +365,7 @@ impl ImmutableAgent {
 
                             let _ = save_message(
                                 conn,
-                                "agent_name_holder",
+                                "coding_agent",
                                 result_message,
                                 "user_proxy"
                             ).await;

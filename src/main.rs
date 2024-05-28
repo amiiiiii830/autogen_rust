@@ -44,36 +44,48 @@ async fn main() -> Result<()> {
     // let code = extract_code(raw);
 
     // println!("{:?}", code);
-    let conn = Connection::open_in_memory()?;
+    // let conn = Connection::open_in_memory()?;
+    let conn = Connection::open("src/database.db")?;
 
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS GroupChat (
-            id INTEGER PRIMARY KEY,
-            agent_name TEXT NOT NULL,
-            message_content TEXT,
-            message_role TEXT,
-            message_context TEXT,
-            tokens_count INTEGER,
-            next_speaker TEXT
-        )",
-        []
-    )?;
+    // conn.execute(
+    //     "CREATE TABLE IF NOT EXISTS GroupChat (
+    //         id INTEGER PRIMARY KEY,
+    //         agent_name TEXT NOT NULL,
+    //         message_content TEXT,
+    //         message_role TEXT,
+    //         message_context TEXT,
+    //         tokens_count INTEGER,
+    //         next_speaker TEXT
+    //     )",
+    //     []
+    // )?;
+    // conn.execute("DELETE FROM GroupChat", [])?;
 
-    let coding_agent: ImmutableAgent = ImmutableAgent::new(
-        "coding_agent",
-        "you're a Python coder",
-        None,
-        "",
-        "an iterative python coder"
-    );
+    let coding_agent = ImmutableAgent::coding_agent(None, "tools_map_meta_placeholder");
+    let router_agent = ImmutableAgent::router_agent(None, "tools_map_meta_placeholder");
+    let user_proxy = ImmutableAgent::user_proxy(None, "tools_map_meta_placeholder");
+
     let message: Message = Message::new(
-        Content::Text("creat a text based tick-tack-toe game".to_string()),
+        Content::Text("caculate prime number up to 100".to_string()),
         Some("random".to_string()),
         Role::User
     );
 
-
     let code = coding_agent.start_coding(&message, &conn).await?;
+
+    for _ in 1..9 {
+        user_proxy.send(message.clone(), &conn, Some("router_agent")).await;
+         user_proxy.receive_message(&conn).await;
+       router_agent.receive_message(&conn).await;
+        coding_agent.receive_message(&conn).await;
+
+
+        // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
+
+
+        // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
+
+    }
     // println!("{:?}", code);
 
     // let messages = vec![
