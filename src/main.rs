@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
 
     // let code = coding_agent.start_coding(&message, &conn).await?;
 
-   let res  = coding_agent.furter_task_by_toolcall("find fibonacci up to 15 with python code", &conn).await.unwrap();
+   let  res  = user_proxy.planning("calculate prime number up to 100", &conn).await;
 
     // for _ in 1..9 {
     //     user_proxy.send(message.clone(), &conn, Some("coding_agent")).await;

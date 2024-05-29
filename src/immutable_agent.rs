@@ -7,6 +7,7 @@ use crate::webscraper_hook::get_webpage_text;
 use crate::webscraper_hook::search_bing;
 use crate::{
     ROUTING_SYSTEM_PROMPT,
+    PLANNING_SYSTEM_PROMPT,
     IS_TERMINATION_SYSTEM_PROMPT,
     CODE_PYTHON_SYSTEM_MESSAGE,
     ITERATE_CODING_FAIL_TEMPLATE,
@@ -76,6 +77,37 @@ pub fn parse_result_and_key_points(input: &str) -> (bool, String) {
         .map_or(String::new(), |m| m.as_str().to_string());
 
     (&continue_to_work_or_end == "TERMINATE", key_points)
+}
+
+pub fn parse_planning_steps(input: &str) -> (bool, Vec<String>) {
+    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
+    let json_str = json_regex
+        .captures(input)
+        .and_then(|cap| cap.get(0))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    if json_str.is_empty() {
+        return (false, vec![]);
+    }
+
+    let parsed_json: Value = match serde_json::from_str(&json_str) {
+        Ok(val) => val,
+        Err(_) => {
+            return (false, vec![]);
+        }
+    };
+
+    let can_complete_in_one_step =
+        parsed_json["can_complete_in_one_step"].as_str().unwrap_or("NO") == "YES";
+
+    let steps_to_take = parsed_json["steps_to_take"].as_array().map_or(vec![], |arr|
+        arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect()
+    );
+
+    (can_complete_in_one_step, steps_to_take)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -189,7 +221,8 @@ impl ImmutableAgent {
                     "get_webpage_text" => {
                         let url = args
                             .get("url")
-                            .ok_or_else(|| anyhow::anyhow!("Missing 'url' argument")).ok()?
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'url' argument"))
+                            .ok()?
                             .to_string();
 
                         get_webpage_text(url).await.ok()?
@@ -197,14 +230,16 @@ impl ImmutableAgent {
                     "search_bing" => {
                         let query = args
                             .get("query")
-                            .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument")).ok()?
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument"))
+                            .ok()?
                             .to_string();
                         search_bing(&query).await.ok()?
                     }
                     "start_coding" => {
                         let key_points = args
                             .get("key_points")
-                            .ok_or_else(|| anyhow::anyhow!("Missing 'key_points' argument")).ok()?
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'key_points' argument"))
+                            .ok()?
                             .to_string();
                         let _ = self.start_coding(&key_points, conn).await;
 
@@ -213,6 +248,42 @@ impl ImmutableAgent {
                     _ => panic!(),
                 };
                 return Some(res);
+            }
+        }
+        None
+    }
+    pub async fn planning(&self, input: &str, conn: &Connection) -> Option<Vec<String>> {
+        let messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(PLANNING_SYSTEM_PROMPT.to_string()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(input.to_owned()),
+            }
+        ];
+
+        let max_token = 500u16;
+        let output: LlamaResponseMessage = chat_inner_async_llama(
+            messages.clone(),
+            max_token
+        ).await.expect("Failed to generate reply");
+
+        match &output.content {
+            Content::Text(_out) => {
+                println!("{:?}", _out.clone());
+                let (one_step_task, steps) = parse_planning_steps(_out);
+               return Some(steps);
+                // match one_step_task {
+                //     true => Some(steps.cl),
+                //     false => ,
+                // };
+            }
+            Content::ToolCall(call) => {
+                todo!();
             }
         }
         None
@@ -387,11 +458,7 @@ impl ImmutableAgent {
         (terminate_or_not, key_points)
     }
 
-    pub async fn start_coding(
-        &self,
-        message_text: &str,
-        conn: &Connection
-    ) -> anyhow::Result<()> {
+    pub async fn start_coding(&self, message_text: &str, conn: &Connection) -> anyhow::Result<()> {
         let formatter = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
         let user_prompt = formatter(&[message_text]);
 
