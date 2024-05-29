@@ -1,4 +1,3 @@
-// use crate::exec_python::run_python_capture;
 use crate::exec_python::*;
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
@@ -19,12 +18,11 @@ use crate::{
 use anyhow;
 use async_openai::types::Role;
 use rusqlite::Connection;
-use rustpython_vm::stdlib::errno::errors::exit;
 use serde::{ Deserialize, Serialize };
 use serde_json::{ Value };
 use regex::Regex;
 
-pub fn parse_next_speaker(input: &str) -> (bool, String, String) {
+pub fn parse_next_speaker_and_key_points(input: &str) -> (bool, String, String) {
     let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
     let json_str = json_regex
         .captures(input)
@@ -54,7 +52,7 @@ pub fn parse_next_speaker(input: &str) -> (bool, String, String) {
     (&continue_to_work_or_end == "TERMINATE", next_speaker, key_points)
 }
 
-pub fn parse_result_and_key_points(input: &str) -> (bool, String) {
+pub fn parse_run_result_and_key_points(input: &str) -> (bool, String) {
     let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
     let json_str = json_regex
         .captures(input)
@@ -174,8 +172,8 @@ impl ImmutableAgent {
         }
     }
 
-    pub async fn send(&self, message: Message, conn: &Connection, next_speaker: Option<&str>) {
-        let _ = save_message(conn, &self.name, message, next_speaker.unwrap()).await;
+    pub async fn send(&self, message_text: &str, conn: &Connection, next_speaker: &str) {
+        let _ = save_message(conn, &self.name, message_text, next_speaker).await;
     }
 
     pub async fn receive_message(&self, conn: &Connection) -> Option<String> {
@@ -237,14 +235,15 @@ impl ImmutableAgent {
 
                         String::from("code is being generated")
                     }
-                    _ => panic!(),
+                    _ => {
+                        return None;
+                    }
                 };
-                return Some(res);
+                Some(res)
             }
         }
-        None
     }
-    pub async fn planning(&self, input: &str, conn: &Connection) -> Option<Vec<String>> {
+    pub async fn planning(&self, input: &str) -> Vec<String> {
         let messages = vec![
             Message {
                 role: Role::System,
@@ -267,23 +266,16 @@ impl ImmutableAgent {
         match &output.content {
             Content::Text(_out) => {
                 println!("{:?}\n\n", _out.clone());
-                let  steps = parse_planning_steps(_out);
-                return Some(steps);
-                // match one_step_task {
-                //     true => Some(steps.cl),
-                //     false => ,
-                // };
+                parse_planning_steps(_out)
             }
-            Content::ToolCall(call) => {
-                todo!();
-            }
+            _ => unreachable!(),
         }
-        None
     }
 
     pub async fn run(&self, conn: &Connection, stop_toggle: bool) -> anyhow::Result<()> {
         match self.receive_message(conn).await {
             Some(message_text) => {
+                println!("{} received: {}", self.name, message_text);
                 let stop = self.a_generate_reply(&message_text, conn).await?;
                 if stop_toggle && stop {
                     std::process::exit(0);
@@ -322,16 +314,8 @@ impl ImmutableAgent {
 
         match &output.content {
             Content::Text(_out) => {
-                let message = Message {
-                    name: None,
-                    content: output.content.clone(),
-                    role: Role::Assistant,
-                };
-                let (terminate_or_not, next_speaker, key_points) = self.assign_next_speaker(
-                    &_out,
-                    &user_prompt,
-                    conn
-                ).await;
+                let (terminate_or_not, next_speaker, key_points) =
+                    self.assign_next_speaker_and_send(&_out, &user_prompt, conn).await;
 
                 println!(
                     "terminate?: {:?}, speaker: {:?}, points: {:?}\n",
@@ -339,22 +323,14 @@ impl ImmutableAgent {
                     next_speaker.clone(),
                     key_points.clone()
                 );
-                let _ = save_message(conn, &self.name, message.clone(), &next_speaker).await;
-                return Ok(terminate_or_not);
-                // messages.push(message);
+              return  Ok(terminate_or_not);
             }
-            Content::ToolCall(_call) => {
-                // let func = call.name;
-                // let args = call.arguments.unwrap_or_default();
-                // Execute the tool call function
-                // func(args);
-            }
+            _ => unreachable!(),
         }
         Ok(false)
-        // Some(messages)
     }
 
-    pub async fn assign_next_speaker(
+    pub async fn assign_next_speaker_and_send(
         &self,
         current_text_result: &str,
         instruction: &str,
@@ -365,22 +341,6 @@ impl ImmutableAgent {
             instruction,
             current_text_result
         );
-
-        // let user_prompt = match get_agent_names_and_abilities(conn).await {
-        //     Err(_) =>
-        //         format!(
-        //             "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
-        //             instruction,
-        //             current_text_result
-        //         ),
-        //     Ok(c) =>
-        //         format!(
-        //             "Here are the list of agents and their abilities: {:?}, examine current result: {} against the task {:?}, please decide which is the next speaker to handle",
-        //             c,
-        //             instruction,
-        //             current_text_result
-        //         ),
-        // };
 
         let messages = vec![
             Message {
@@ -399,7 +359,12 @@ impl ImmutableAgent {
             "llm generation failure"
         );
         println!("{:?}", raw_reply.content_to_string().clone());
-        parse_next_speaker(&raw_reply.content_to_string())
+        let (stop_here, speaker, key_points) = parse_next_speaker_and_key_points(
+            &raw_reply.content_to_string()
+        );
+
+        let _ = save_message(conn, &self.name, &key_points, &speaker).await;
+        (stop_here, speaker, key_points)
     }
 
     pub async fn _is_termination(
@@ -432,19 +397,14 @@ impl ImmutableAgent {
             "llm generation failure"
         );
 
-        println!("raw_reply: {:?}", raw_reply.content_to_string());
+        println!("_is_termination raw_reply: {:?}", raw_reply.content_to_string());
 
-        let (terminate_or_not, key_points) = parse_result_and_key_points(
+        let (terminate_or_not, key_points) = parse_run_result_and_key_points(
             &raw_reply.content_to_string()
         );
 
-        let result_message = Message {
-            name: None,
-            content: Content::Text(key_points.clone()),
-            role: Role::Assistant,
-        };
         if terminate_or_not {
-            let _ = save_message(conn, &self.name, result_message, "user_proxy").await;
+            let _ = save_message(conn, &self.name, &key_points, "user_proxy").await;
         }
 
         (terminate_or_not, key_points)
@@ -482,19 +442,14 @@ impl ImmutableAgent {
                             &user_prompt,
                             conn
                         ).await;
-                        println!("Termination Check: {}", terminate_or_not);
+                        println!("Termination Check: {}\n", terminate_or_not);
                         if terminate_or_not {
-                            println!("key_points:{:?}", key_points);
-                            let result_message = Message {
-                                name: None,
-                                content: Content::Text(key_points),
-                                role: Role::Assistant,
-                            };
+                            println!("key_points:{:?}\n", key_points);
 
                             let _ = save_message(
                                 conn,
                                 "coding_agent",
-                                result_message,
+                                &key_points,
                                 "user_proxy"
                             ).await;
                             break;

@@ -51,39 +51,37 @@ async fn main() -> Result<()> {
     //     "CREATE TABLE IF NOT EXISTS GroupChat (
     //         id INTEGER PRIMARY KEY,
     //         agent_name TEXT NOT NULL,
-    //         message_content TEXT,
-    //         message_role TEXT,
-    //         message_context TEXT,
-    //         tokens_count INTEGER,
+    //         message_content TEXT NOT NULL,
+    //         tokens_count INTEGER NOT NULL,
     //         next_speaker TEXT
     //     )",
     //     []
     // )?;
-    // conn.execute("DELETE FROM GroupChat", [])?;
+//   let _ =  conn.execute("DELETE FROM GroupChat", [])?;
 
     let coding_agent = ImmutableAgent::coding_agent(None, "tools_map_meta_placeholder");
     let user_proxy = ImmutableAgent::user_proxy(None, "tools_map_meta_placeholder");
 
-    let message: Message = Message::new(
-        Content::Text("find fibonacci up to 15".to_string()),
-        Some("random".to_string()),
-        Role::User
-    );
+    // let message: Message = Message::new(
+    //     Content::Text("find fibonacci up to 15".to_string()),
+    //     Some("random".to_string()),
+    //     Role::User
+    // );
 
     // let code = coding_agent.start_coding(&message, &conn).await?;
 
-   let  res  = user_proxy.planning("go get today's weather forecast", &conn).await;
+//    let  res  = user_proxy.planning("go get today's weather forecast").await;
 
     // for _ in 1..9 {
-    //     user_proxy.send(message.clone(), &conn, Some("coding_agent")).await;
-    //     coding_agent.run(&conn, false).await;
-    //     user_proxy.run(&conn, true).await;
+        // user_proxy.send("find fibonacci up to 15", &conn, "coding_agent").await;
+        coding_agent.run(&conn, false).await;
+        // user_proxy.run(&conn, true).await;
 
-    //     // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
+        // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
 
-    //     // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
+        // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
     // }
-    println!("{:?}", res);
+    // println!("{:?}", res);
 
     // let messages = vec![
     //     Message {

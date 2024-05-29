@@ -124,9 +124,6 @@ impl ConversableAgent {
         content.contains("TERMINATE")
     }
 
-    pub async fn send(&self, message: Message, conn: &Connection, next_speaker: Option<&str>) {
-        let _ = save_message(conn, &self.name, message, next_speaker.unwrap()).await;
-    }
 
     pub async fn receive_message(&self, conn: &Connection) -> Option<Message> {
         let next_speaker = get_next_speaker_db(conn).await.ok()?;
@@ -152,7 +149,7 @@ impl ConversableAgent {
                 if self._is_termination(&out) {
                     todo!()
                 } else {
-                    let next_speaker = assign_next_speaker(&conn).await.ok()?;
+                    let next_speaker = assign_next_speaker_and_send(&conn).await.ok()?;
 
                     if next_speaker == self.name || next_speaker.is_none() {
                     } else {
@@ -175,7 +172,7 @@ impl ConversableAgent {
         })
     }
 
-    pub async fn assign_next_speaker(
+    pub async fn assign_next_speaker_and_send(
         &mut self,
         message: &Message,
         instruction: &str,

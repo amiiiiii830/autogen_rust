@@ -41,65 +41,12 @@ pub struct GroupChat {
     pub next_speaker: String,
 }
 
-pub struct NaiveMessage {
-    pub content: String,
-    pub role: String,
-}
-
-impl From<NaiveMessage> for Message {
-    fn from(naive: NaiveMessage) -> Self {
-        let content = if naive.content.starts_with("toolcall:") {
-            // Assuming a specific format for ToolCall
-            let tool_name = naive.content.strip_prefix("toolcall:").unwrap_or("").to_string();
-            Content::ToolCall(ToolCall {
-                name: tool_name,
-                arguments: None,
-            })
-        } else {
-            Content::Text(naive.content)
-        };
-
-        let role = match naive.role.as_str() {
-            "system" => Role::System,
-            "user" => Role::User,
-            "assistant" => Role::Assistant,
-            _ => Role::Assistant,
-        };
-
-        Message {
-            content,
-            role,
-            name: None,
-        }
-    }
-}
-
-impl From<Message> for NaiveMessage {
-    fn from(message: Message) -> Self {
-        let content = match message.content {
-            Content::Text(text) => text,
-            Content::ToolCall(tool_call) => format!("toolcall:{}", tool_call.name),
-        };
-
-        let role = match message.role {
-            Role::System => "system".to_string(),
-            Role::User => "user".to_string(),
-            Role::Assistant => "assistant".to_string(),
-            _ => "user".to_string(),
-        };
-
-        NaiveMessage { content, role }
-    }
-}
-
 pub async fn create_message_store_table(conn: &Connection) -> Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS GroupChat (
             id INTEGER PRIMARY KEY,
             agent_name TEXT NOT NULL,
             message_content TEXT,
-            message_role TEXT,
-            message_context TEXT,
             tokens_count INTEGER,
             next_speaker TEXT
         )",
@@ -108,28 +55,9 @@ pub async fn create_message_store_table(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub async fn retrieve_messages(conn: &Connection, agent_name: &str) -> Result<Vec<Message>> {
-    let mut stmt = conn.prepare(
-        "SELECT message_content, message_role, message_context FROM GroupChat WHERE agent_name = ?1"
-    )?;
-    let rows = stmt.query_map(params![agent_name], |row| {
-        Ok(Message {
-            content: Content::Text(row.get::<_, String>(0)?), // Specify type as String
-            role: Role::from_str(&row.get::<_, String>(1)?), // Specify type as String and use from_str
-            name: Some(agent_name.to_owned()),
-        })
-    })?;
-
-    let mut messages = Vec::new();
-    for message_result in rows {
-        messages.push(message_result?);
-    }
-    Ok(messages)
-}
-
 pub async fn retrieve_most_recent_message(conn: &Connection, agent_name: &str) -> Option<String> {
     let mut stmt = conn
-        .prepare("SELECT message_context, next_speaker FROM GroupChat ORDER BY id DESC LIMIT 1")
+        .prepare("SELECT message_content, next_speaker FROM GroupChat ORDER BY id DESC LIMIT 1")
         .ok()?;
 
     let result = stmt
@@ -151,15 +79,14 @@ pub async fn retrieve_most_recent_message(conn: &Connection, agent_name: &str) -
 pub async fn save_message(
     conn: &Connection,
     agent_name: &str,
-    message: Message,
+    message_text: &str,
     next_speaker: &str
 ) -> Result<()> {
-    let tokens_count = message.content_to_string().split_whitespace().count();
+    let tokens_count = message_text.split_whitespace().count();
 
-    let naive_message = NaiveMessage::from(message);
     conn.execute(
-        "INSERT INTO GroupChat (agent_name, message_content, message_role, tokens_count, next_speaker) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![agent_name, naive_message.content, naive_message.role, tokens_count, next_speaker]
+        "INSERT INTO GroupChat (agent_name, message_content, tokens_count, next_speaker) VALUES (?1, ?2, ?3, ?4)",
+        params![agent_name, message_text, tokens_count, next_speaker]
     )?;
     Ok(())
 }
