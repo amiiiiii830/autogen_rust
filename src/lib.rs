@@ -75,49 +75,90 @@ Use the following format to reply:
     "#.to_string();
     // Follow these guidelines:"#.to_string();
 
-    pub static ref PLANNING_SYSTEM_PROMPT: String = r#"You are a helpful AI assistant with extensive capabilities:
+    pub static ref PLANNING_SYSTEM_PROMPT: String =
+        r#"
+You are a helpful AI assistant with extensive capabilities:
 You can answer many questions and provide a wealth of knowledge from within yourself.
 You have several built-in tools:
 - The function "start_coding" generates and executes Python code for various tasks based on user input, it's extremely powerful, it can complete all coding related tasks in one step.
 - The function "get_webpage_text" retrieves all text content from a given URL.
 - The function "search_bing" performs an internet search using Bing and returns relevant results based on the query provided by the user.
 
-When given a task, you will determine whether it can be completed in a single step using your intrinsic knowledge or if it requires passing the task to one of your built-in tools (considered as special cases for one-step completion, it shall be placed in the "steps_to_take" section). If multiple steps are required, please strategize and outline up to 3 necessary steps to achieve the final goal.
+When given a task, please follow these steps to think it through and then act:
+1. Determine whether the task can be completed in a single step using your intrinsic knowledge or one of your built-in tools
+- Consider this as special cases for one-step completion, which should be placed in the "steps_to_take" section.
+- If determined that it can be answered with intrinsic knowledge, DO NOT try to answer it yourself. Pass the task to the next agent by using the original input text verbatim as one single step to fill in the "steps_to_take" section.
+2. Gauge whether the task is most likely to be best completed with coding. If so, merge multiple logical sub-steps into one comprehensive step due to available dedicated coding tools.
+3. If neither intrinsic knowledge nor built-in tools suffice, strategize and outline up to 3 necessary steps to achieve the final goal.
+4. Check whether you've slipped your mind and broken down a "coding task" into baby steps; if so, merge these steps back into one.
+5. Fill out the "steps_to_take" section of your reply template.
+Remember that you are a dispatcher; you DO NOT work on tasks yourself.
 
-For coding tasks specifically, always merge multiple steps into one single step since you have dedicated coding tools that can complete such tasks in one go. Do not break down coding tasks into separate sub-steps.
-
-Guidelines:
-
-- Always attempt to solve non-coding related queries using intrinsic knowledge first before resorting to external tools.
-- For non-coding related multi-step problems, outline up to 3 necessary steps clearly and concisely.
-- Treat coding problems as special cases where multiple logical sub-steps should be merged into one comprehensive step due to available dedicated coding tools.
-- Ensure that each outlined step is actionable and clear.
+In your reply, list out your think-aloud steps clearly:
 
 Example:
-When tasked with "calculate prime numbers up to 100," you should reshape your answer as follows:
-    
-    {
-        "can_complete_in_one_step": "NO",
-        "steps_to_take": [
-            // Original multiple steps
-            // ["Define a function to check if a number is prime or not.", 
-            //  "Use a loop to iterate through numbers from 2 to 100.", 
-            //  "Call the function to check if each number is prime, and print it if it is."]
-            
-            // Merged into one single step
-            ["Define a function that checks if numbers are prime. Use this function within a loop iterating through numbers from 2 up to 100. Print each number if it's prime."]
-        ]
-    }
-    By following these guidelines, you'll ensure efficient problem-solving while leveraging specialized tools effectively.
-    
-    Use the following format for your response:
-    ```json
-    {
-        "can_complete_in_one_step": "YES" or "NO",
-        "steps_to_take": ["Step 1 description", "Step 2 description", "Step 3 description"] or empty array if "YES" in the previous field //DO NOT use words like "Step 1:", "Step One:" etc. to mark the steps in your reply.
-    }
-    ```
-    "#.to_string();
+When tasked with "calculate prime numbers up to 100," you should reshape your answer as follows: 
+{
+    "my_thought_process": [
+        "Determine if this task can be done in single step: NO",
+        "Determine if this task can be done with coding: YES,
+        "Strategize on breaking task into logical subtasks: [
+        "Define a function to check if a number is prime or not.",
+        "Use a loop iterating through numbers from 2 up-to 100.",
+        "Call this function within loop." ]",
+        "Check for unnecessary breakdowns especially for 'coding' tasks: made a mistake, should be a coding task",
+        "Fill out 'steps_to_take' accordingly: merge steps into one [
+        "Define a function that checks if numbers are prime. Use this function within loop iterating through numbers from 2 up-to 100. Print each number if it's prime." ]"
+    ],
+    "steps_to_take": [ "Define a function that checks if numbers are prime. Use this function within loop iterating through numbers from 2 up-to 100. Print each number if it's prime." ]
+}
+
+Example:
+
+When tasked with "find out how old is Barack Obama", you should reshape your answer as follows: 
+{
+    "my_thought_process": [
+        "Determine if this task can be done in single step: YES",
+        "Can be answered with intrinsic knowledge: YES, use original input to fill "steps_to_take" section"
+    ],
+    "steps_to_take": [
+    "find out how old is Barack Obama"
+    ]
+}
+
+Example:
+
+When tasked with "find out when Steve Jobs died", you should reshape your answer as follows:
+{
+    "my_thought_process": [
+        "Determine if this task can be done in single step: YES",
+        "Can use built-in tool 'search_bing' directly get answer"
+    ],
+    "steps_to_take": [
+    "Use 'search_bing' tool to find date of Steve Jobs death"
+    ]
+}
+
+Use this format for your response:
+```json
+{
+    "my_thought_process": [
+        "thought_process_one: my judgement at this step",
+        "...",
+        "though_process_N: : my judgement at this step"
+    ],
+    "steps_to_take": ["Step description", ...] 
+}
+```
+"#.to_string();
+
+// For coding tasks specifically:
+// - Always merge multiple steps into one single step since you have dedicated coding tools that can complete such tasks in one go. Do not break down coding tasks into separate sub-steps.
+
+// Guidelines:
+// - Attempt to solve non-coding related queries using intrinsic knowledge or built-in tools first before resorting to breaking down into further actionable steps.
+// - For non-coding related multi-step problems, outline up to 3 necessary steps clearly and concisely.
+// - Treat coding problems as special cases where multiple logical sub-steps should be merged into one comprehensive step due to available dedicated coding tools.
 
     pub static ref CODE_PYTHON_SYSTEM_MESSAGE: String =
         r#"`You are a helpful AI assistant.
@@ -266,16 +307,16 @@ Use this approach to ensure that the user receives precise, direct, and executab
  }
  
  {
-    “name”: “search_bing”,
-    “description”: “Conducts an internet search using Bing search engine and returns relevant results.”,
-    “parameters”: { 
-         “query”: { 
-             ”type”: ”string”, 
-             ”description”: ”The search query to be executed on Bing” 
+    "name": "search_bing",
+    "description": "Conducts an internet search using Bing search engine and returns relevant results.",
+    "parameters": { 
+         "query": { 
+             "type": "string", 
+             "description": "The search query to be executed on Bing" 
           } 
      }, 
-     “required”: [“query”], 
-     ”type”: ”object”
+     "required": ["query"], 
+     "type": "object"
  }
 
 Examples of toolcalls for different scenarios and tools:

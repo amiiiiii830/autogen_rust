@@ -79,35 +79,27 @@ pub fn parse_result_and_key_points(input: &str) -> (bool, String) {
     (&continue_to_work_or_end == "TERMINATE", key_points)
 }
 
-pub fn parse_planning_steps(input: &str) -> (bool, Vec<String>) {
-    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
-    let json_str = json_regex
+pub fn parse_planning_steps(input: &str) -> Vec<String> {
+    let steps_regex = Regex::new(r#""steps_to_take":\s*(\[[^\]]*\])"#).unwrap();
+    let steps_str = steps_regex
         .captures(input)
-        .and_then(|cap| cap.get(0))
+        .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
 
-    if json_str.is_empty() {
-        return (false, vec![]);
+    if steps_str.is_empty() {
+        eprintln!("Failed to extract 'steps_to_take' from input.");
+        return vec![];
     }
 
-    let parsed_json: Value = match serde_json::from_str(&json_str) {
+    let parsed_steps: Vec<String> = match serde_json::from_str(&steps_str) {
         Ok(val) => val,
         Err(_) => {
-            return (false, vec![]);
+            eprintln!("Failed to parse extracted 'steps_to_take' as JSON.");
+            return vec![];
         }
     };
 
-    let can_complete_in_one_step =
-        parsed_json["can_complete_in_one_step"].as_str().unwrap_or("NO") == "YES";
-
-    let steps_to_take = parsed_json["steps_to_take"].as_array().map_or(vec![], |arr|
-        arr
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect()
-    );
-
-    (can_complete_in_one_step, steps_to_take)
+    parsed_steps
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -274,9 +266,9 @@ impl ImmutableAgent {
 
         match &output.content {
             Content::Text(_out) => {
-                println!("{:?}", _out.clone());
-                let (one_step_task, steps) = parse_planning_steps(_out);
-               return Some(steps);
+                println!("{:?}\n\n", _out.clone());
+                let  steps = parse_planning_steps(_out);
+                return Some(steps);
                 // match one_step_task {
                 //     true => Some(steps.cl),
                 //     false => ,
