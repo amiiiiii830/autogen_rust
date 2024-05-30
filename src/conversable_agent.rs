@@ -1,17 +1,18 @@
-// use crate::exec_python::run_python;
-use crate::exec_python::*;
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
 use crate::message_store::*;
-// use crate::CODE_PYTHON_SYSTEM_MESSAGE;
+use crate::{
+    ROUTING_SYSTEM_PROMPT,
+    PLANNING_SYSTEM_PROMPT,
+    IS_TERMINATION_SYSTEM_PROMPT,
+    USER_PROXY_SYSTEM_PROMPT,
+};
 use anyhow;
 use async_openai::types::Role;
 use rusqlite::Connection;
 use serde::{ Deserialize, Serialize };
-use serde_json::{ json, Value };
-use std::collections::{ HashMap, VecDeque };
-use std::sync::{ Arc, Mutex };
-type Context = HashMap<String, String>;
+use serde_json::{ Value };
+use regex::Regex;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -23,7 +24,7 @@ pub struct Message {
 impl Default for Message {
     fn default() -> Self {
         Message {
-            content: None,
+            content: Content::Text("placeholder".to_string()),
             name: None,
             role: Role::User,
         }
@@ -31,14 +32,22 @@ impl Default for Message {
 }
 
 impl Message {
-    pub fn new(content: Content, name: Option<String>, role: Option<Role>) -> Self {
+    pub fn new(content: Content, name: Option<String>, role: Role) -> Self {
         Message {
             content,
             name,
-            role: role.or(Some(Role::Assistant)), // Set default role to Assistant if None is provided
+            role, // Set default role to Assistant if None is provided
         }
     }
 }
+
+/* pub struct ImmutableAgent {
+    pub name: String,
+    pub system_prompt: String,
+    pub llm_config: Option<Value>,
+    pub tools_map_meta: String,
+    pub description: String,
+} */
 
 pub struct ConversableAgent {
     pub name: String,
@@ -120,86 +129,6 @@ impl ConversableAgent {
         retrieve_messages(conn, &self.name).await
     }
 
-    pub fn _is_termination(&self, content: &str) -> bool {
-        content.contains("TERMINATE")
-    }
-
-
-    pub async fn receive_message(&self, conn: &Connection) -> Option<Message> {
-        let next_speaker = get_next_speaker_db(conn).await.ok()?;
-        match next_speaker == self.name {
-            true => retrieve_most_recent_message(conn, &self.name).await.ok(),
-
-            false => None,
-        }
-    }
-
-    pub async fn a_generate_reply(
-        &self,
-        messages: Vec<Message>,
-        conn: &Connection
-    ) -> Option<Message> {
-        let max_token = 1000u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(messages, max_token).await.expect(
-            "Failed to generate reply"
-        );
-
-        let res = match output.content {
-            Content::Text(out) => {
-                if self._is_termination(&out) {
-                    todo!()
-                } else {
-                    let next_speaker = assign_next_speaker_and_send(&conn).await.ok()?;
-
-                    if next_speaker == self.name || next_speaker.is_none() {
-                    } else {
-                        save_message(conn, agent_name, message, next_speaker).await;
-                    }
-                }
-            }
-            Content::ToolCall(call) => {
-                let func = call.name;
-                let args = call.arguments;
-
-                func(args)
-            }
-        };
-
-        Some(Message {
-            content: Some(res),
-            name: None,
-            role: Role::User,
-        })
-    }
-
-    pub async fn assign_next_speaker_and_send(
-        &mut self,
-        message: &Message,
-        instruction: &str,
-        conn: &Connection
-    ) -> anyhow::Result<()> {
-        let speakers_and_abilities = get_agent_names_and_abilities(conn).await?;
-        let system_message = self.system_message(conn).await?;
-        let user_prompt = format!(
-            "Here are the list of agents and their abilties: {:?}, please examine current result: {} against the instructed task {:?}, and decide which speaker to be the next",
-            speakers_and_abilities,
-            message.content_to_string().unwrap(),
-            instruction
-        );
-
-        let messages = vec![system_message, Message {
-            role: Role::User,
-            name: None,
-            content: Some(Content::Text(user_prompt)),
-        }];
-
-        let selected_speaker = chat_inner_async_llama(messages, 100).await?;
-
-        save_message(conn, agent_name, message, selected_speaker).await;
-
-        Ok(())
-    }
-
     pub async fn update_system_prompt(
         &mut self,
         new_prompt: &str,
@@ -209,99 +138,305 @@ impl ConversableAgent {
         Ok(())
     }
 
-    pub fn execute_code_blocks(&self, code_blocks: &str) -> String {
-        todo!()
-        // match run_python(code_blocks) {
-        //     Ok(res) => res,
-        //     Err(res) => res,
-        // }
-    }
+    pub async fn send(&self, message_text: &str, conn: &Connection, next_speaker: &str) {
+        let _ = save_message(conn, &self.name, message_text, next_speaker).await;
 
-    pub async fn start_coding(
-        &self,
-        user_message: &Message,
-        conn: &Connection
-    ) -> anyhow::Result<String> {
-        let system_message = self.system_message(conn).await?;
-        let user_prompt = format!(
-            "Here is the task for you: {:?}",
-            user_message.content_to_string()
-        );
+        if next_speaker == "user_proxy" {
+            let inp = self.get_user_feedback().await;
 
-        let messages = vec![system_message, Message {
-            role: Role::User,
-            name: None,
-            content: Some(Content::Text(user_prompt)),
-        }];
-
-        let code = chat_inner_async_llama(messages, 1000u16).await?;
-
-        let content = match code.content {
-            Content::Text(c) => c,
-            Content::ToolCall(_) => panic!(),
-        };
-
-        Ok(content)
-    }
-
-    pub async fn iterate_coding(
-        &self,
-        message_history: &Vec<Message>,
-        conn: &Connection
-    ) -> anyhow::Result<String> {
-        // need to wrap the code and error msgs in template
-        let user_prompt = format!(
-            "Here is the task for you: {:?}",
-            user_message.content_to_string()
-        );
-
-        let messages = vec![Message {
-            role: Role::User,
-            name: None,
-            content: Some(Content::Text(user_prompt)),
-        }];
-
-        let code = chat_inner_async_llama(messages, 1000u16).await?;
-
-        let content = match code.content {
-            Content::Text(c) => c,
-            Content::ToolCall(_) => panic!(),
-        };
-
-        Ok(content)
-    }
-
-    pub async fn extract_and_run_python(&self, in_message: &Message) -> anyhow::Result<String> {
-        let raw = in_message.content_to_string().expect("failed to convert message to String");
-
-        let code = extract_code(&raw);
-
-        match run_python_capture(&code) {
-            Ok(res) => todo!(),
-
-            Err(e) => todo!(),
+            if inp == "stop" {
+                // Exit on any non-empty input
+                std::process::exit(0);
+            } else {
+                println!("{:?}", inp);
+                // std::process::exit(0);
+            }
         }
     }
 
-    // pub async fn execute_tool_call(&self, call: &ToolCall) -> anyhow::Result<String, String> {
-    //     let func = call.name.clone();
-    //     let args = call.arguments.unwrap_or_default();
+    pub async fn get_user_feedback(&self) -> String {
+        use std::io::{ self, Write };
+        print!("User input:");
 
-    //     let len = args.len();
+        io::stdout().flush().expect("Failed to flush stdout");
 
-    //     match len {
-    //         0 => call_function!(&func),
-    //         1 => call_function!(&func, args, single),
-    //         _ => call_function!(&func, args, multi),
-    //     }
-    // }
+        let mut input = String::new();
 
-    pub async fn last_message(&self, conn: &Connection) -> Option<Message> {
-        let messages = self.message_history(conn).await.expect("failed to get message history");
+        io::stdin().read_line(&mut input).expect("Failed to read line");
 
-        match messages.last() {
-            Some(msg) => Some(msg.clone()),
-            None => None,
+        if let Some('\n') = input.chars().next_back() {
+            input.pop();
+        }
+        if let Some('\r') = input.chars().next_back() {
+            input.pop();
+        }
+
+        return input;
+    }
+
+    pub async fn receive_message(&self, conn: &Connection) -> Option<String> {
+        retrieve_most_recent_message(conn, &self.name).await
+    }
+
+    pub async fn run(&self, conn: &Connection, stop_toggle: bool) -> anyhow::Result<()> {
+        match self.receive_message(conn).await {
+            Some(message_text) => {
+                println!("{} received: {}", self.name, message_text);
+                let stop = self.a_generate_reply(&message_text, conn).await?;
+                if stop_toggle && stop {
+                    std::process::exit(0);
+                }
+                Ok(())
+            }
+            None => Ok(()),
         }
     }
+
+    pub async fn a_generate_reply(
+        &self,
+        content_text: &str,
+        conn: &Connection
+    ) -> anyhow::Result<bool> {
+        let user_prompt = format!("Here is the task for you: {:?}", content_text);
+
+        let messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(self.system_prompt.clone()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(user_prompt.clone()),
+            }
+        ];
+
+        let max_token = 1000u16;
+        let output: LlamaResponseMessage = chat_inner_async_llama(
+            messages.clone(),
+            max_token
+        ).await.expect("Failed to generate reply");
+
+        match &output.content {
+            Content::Text(_out) => {
+                let (terminate_or_not, next_speaker, key_points) =
+                    self.assign_next_speaker_and_send(&_out, &user_prompt, conn).await;
+
+                println!(
+                    "terminate?: {:?}, speaker: {:?}, points: {:?}\n",
+                    terminate_or_not.clone(),
+                    next_speaker.clone(),
+                    key_points.clone()
+                );
+                return Ok(terminate_or_not);
+            }
+            _ => unreachable!(),
+        }
+        Ok(false)
+    }
+
+    pub async fn assign_next_speaker_and_send(
+        &self,
+        current_text_result: &str,
+        instruction: &str,
+        conn: &Connection
+    ) -> (bool, String, String) {
+        let user_prompt = format!(
+            "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
+            instruction,
+            current_text_result
+        );
+
+        let messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(ROUTING_SYSTEM_PROMPT.to_string()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(user_prompt),
+            }
+        ];
+
+        let raw_reply = chat_inner_async_llama(messages, 100).await.expect(
+            "llm generation failure"
+        );
+        println!("{:?}", raw_reply.content_to_string().clone());
+        let (stop_here, speaker, key_points) = parse_next_speaker_and_key_points(
+            &raw_reply.content_to_string()
+        );
+
+        let _ = save_message(conn, &self.name, &key_points, &speaker).await;
+        (stop_here, speaker, key_points)
+    }
+
+    pub async fn _is_termination(
+        &self,
+        current_text_result: &str,
+        instruction: &str,
+        conn: &Connection
+    ) -> (bool, String) {
+        let user_prompt = format!(
+            "Given the task: {:?}, examine current result: {}, please decide whether the task is done or not",
+            instruction,
+            current_text_result
+        );
+
+        println!("{:?}", user_prompt.clone());
+        let messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(IS_TERMINATION_SYSTEM_PROMPT.to_string()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(user_prompt),
+            }
+        ];
+
+        let raw_reply = chat_inner_async_llama(messages, 300).await.expect(
+            "llm generation failure"
+        );
+
+        println!("_is_termination raw_reply: {:?}", raw_reply.content_to_string());
+
+        let (terminate_or_not, key_points) = parse_run_result_and_key_points(
+            &raw_reply.content_to_string()
+        );
+
+        if terminate_or_not {
+            let _ = save_message(conn, &self.name, &key_points, "user_proxy").await;
+        }
+
+        (terminate_or_not, key_points)
+    }
+}
+
+pub async fn compress_chat_history(message_history: &Vec<Message>) -> Vec<Message> {
+    let message_history = message_history.clone();
+    let (system_messages, messages) = message_history.split_at(2);
+    let mut system_messages = system_messages.to_vec();
+
+    let chat_history_text = messages
+        .into_iter()
+        .map(|m| m.content_to_string())
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let messages = vec![
+        Message {
+            role: Role::System,
+            name: None,
+            content: Content::Text(FURTER_TASK_BY_TOOLCALL_PROMPT.to_string()),
+        },
+        Message {
+            role: Role::User,
+            name: None,
+            content: Content::Text(chat_history_text),
+        }
+    ];
+
+    let max_token = 1000u16;
+    let output: LlamaResponseMessage = chat_inner_async_llama(
+        messages.clone(),
+        max_token
+    ).await.expect("Failed to generate reply");
+
+    match output.content {
+        Content::Text(compressed) => {
+            let message = Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(compressed),
+            };
+
+            system_messages.push(message);
+        }
+        _ => unreachable!(),
+    }
+
+    system_messages
+}
+
+pub fn parse_next_speaker_and_key_points(input: &str) -> (bool, String, String) {
+    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
+    let json_str = json_regex
+        .captures(input)
+        .and_then(|cap| cap.get(0))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let continue_to_work_or_end_regex = Regex::new(
+        r#""continue_to_work_or_end":\s*"([^"]*)""#
+    ).unwrap();
+    let continue_to_work_or_end = continue_to_work_or_end_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let next_speaker_regex = Regex::new(r#""next_speaker":\s*"([^"]*)""#).unwrap();
+    let next_speaker = next_speaker_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let key_points_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
+    let key_points = key_points_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    (&continue_to_work_or_end == "TERMINATE", next_speaker, key_points)
+}
+
+pub fn parse_run_result_and_key_points(input: &str) -> (bool, String) {
+    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
+    let json_str = json_regex
+        .captures(input)
+        .and_then(|cap| cap.get(0))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let continue_to_work_or_end_regex = Regex::new(
+        r#""continue_to_work_or_end":\s*"([^"]*)""#
+    ).unwrap();
+    let next_speaker_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
+
+    let continue_to_work_or_end = continue_to_work_or_end_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    let key_points = next_speaker_regex
+        .captures(&json_str)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    (&continue_to_work_or_end == "TERMINATE", key_points)
+}
+
+pub fn parse_planning_steps(input: &str) -> Vec<String> {
+    let steps_regex = Regex::new(r#""steps_to_take":\s*(\[[^\]]*\])"#).unwrap();
+    let steps_str = steps_regex
+        .captures(input)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
+
+    if steps_str.is_empty() {
+        eprintln!("Failed to extract 'steps_to_take' from input.");
+        return vec![];
+    }
+
+    let parsed_steps: Vec<String> = match serde_json::from_str(&steps_str) {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("Failed to parse extracted 'steps_to_take' as JSON.");
+            return vec![];
+        }
+    };
+
+    parsed_steps
 }

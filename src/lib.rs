@@ -7,7 +7,6 @@ pub mod llama_structs;
 pub mod llm_llama_local;
 pub mod message_store;
 pub mod webscraper_hook;
-// pub mod tool_call_actuators;
 use lazy_static::lazy_static;
 use std::sync::{ Arc, Mutex };
 
@@ -159,10 +158,10 @@ When tasked with "find out when Steve Jobs died", you should reshape your answer
 {
     "my_thought_process": [
         "Determine if this task can be done in single step: YES",
-        "Can use built-in tool 'search_bing' directly get answer"
+        "Can use built-in tool 'search_bing' directly to get the answer"
     ],
     "steps_to_take": [
-    "Use 'search_bing' tool to find date of Steve Jobs death"
+    "Use 'search_bing' tool to find the date of Steve Jobs death"
     ]
 }
 
@@ -437,3 +436,22 @@ For each function call return a json object with function name and arguments wit
         )
     );
 }
+
+
+/* pub async fn entry(inp: &str) {
+    use tokio::select;
+
+    let mut agent = ImmutableAgent::coding_agent(None, "");
+    loop {
+        agent = select! {
+            agent = group.next_agent() => {
+                agent
+            },
+            _ = signal::ctrl_c() => {
+                std::process::exit(0);
+            },
+        };
+
+        agent.();
+    }
+} */

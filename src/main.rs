@@ -1,7 +1,4 @@
-use async_openai::types::Role;
 use autogen_rust::immutable_agent::*;
-use autogen_rust::llama_structs::*;
-// use autogen_rust::tool_call_actuators::*;
 use anyhow::Result;
 use rusqlite::Connection;
 use tokio;
@@ -57,11 +54,29 @@ async fn main() -> Result<()> {
     //     )",
     //     []
     // )?;
-//   let _ =  conn.execute("DELETE FROM GroupChat", [])?;
+    //   let _ =  conn.execute("DELETE FROM GroupChat", [])?;
 
-    let coding_agent = ImmutableAgent::coding_agent(None, "tools_map_meta_placeholder");
-    let user_proxy = ImmutableAgent::user_proxy(None, "tools_map_meta_placeholder");
+    use tokio::{ select, signal };
 
+    let mut agent = ImmutableAgent::simple("placeholder", "");
+    let mut coding_agent = ImmutableAgent::simple("coding_agent", "");
+    let mut user_proxy = ImmutableAgent::simple("user_proxy", "");
+
+    // loop {
+    //     select! {
+
+    //        result= user_proxy.send("find fibonacci up to 15", &conn, "coding_agent") => agent = user_proxy.clone(),
+
+    //        result= coding_agent.run (&conn,true)=> match result{
+    //            Ok(new_agent) => {agent = coding_agent.clone();},
+    //            Err(e) => eprintln!("Run error: {}", e),
+    //        },
+
+    //        _= signal::ctrl_c ()=> {std ::process ::exit (0);}
+    //    }
+
+    //     agent.run(&conn, true).await;
+    // }
     // let message: Message = Message::new(
     //     Content::Text("find fibonacci up to 15".to_string()),
     //     Some("random".to_string()),
@@ -69,19 +84,20 @@ async fn main() -> Result<()> {
     // );
 
     // let code = coding_agent.start_coding(&message, &conn).await?;
- 
-//    let  res  = user_proxy.planning("go get today's weather forecast").await;
+
+    //    let  res  = user_proxy.planning("go get today's weather forecast").await;
 
     // for _ in 1..9 {
-        user_proxy.send("find fibonacci up to 15", &conn, "user_proxy").await;
-      let res   =  user_proxy.get_user_feedback().await;
-        user_proxy.send(&res, &conn, "user_proxy").await;
-     // coding_agent.run(&conn, false).await;
-        // user_proxy.run(&conn, true).await;
 
-        // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
+    user_proxy.run(&conn, true).await;
+    let res = user_proxy.get_user_feedback().await;
+    user_proxy.send(&res, &conn, "user_proxy").await;
+    // coding_agent.run(&conn, false).await;
+    // user_proxy.run(&conn, true).await;
 
-        // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
+    // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
+
+    // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
     // }
     // println!("{:?}", inp);
 

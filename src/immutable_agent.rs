@@ -12,7 +12,6 @@ use crate::{
     ITERATE_CODING_FAIL_TEMPLATE,
     ITERATE_CODING_START_TEMPLATE,
     ITERATE_CODING_INCORRECT_TEMPLATE,
-    USER_PROXY_SYSTEM_PROMPT,
     FURTER_TASK_BY_TOOLCALL_PROMPT,
 };
 use anyhow;
@@ -22,7 +21,7 @@ use serde::{ Deserialize, Serialize };
 use serde_json::{ Value };
 use regex::Regex;
 
-pub fn parse_next_speaker_and_key_points(input: &str) -> (bool, String, String) {
+pub fn parse_next_step_and_key_points(input: &str) -> (bool, String, String) {
     let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
     let json_str = json_regex
         .captures(input)
@@ -37,8 +36,8 @@ pub fn parse_next_speaker_and_key_points(input: &str) -> (bool, String, String) 
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
 
-    let next_speaker_regex = Regex::new(r#""next_speaker":\s*"([^"]*)""#).unwrap();
-    let next_speaker = next_speaker_regex
+    let next_step_regex = Regex::new(r#""next_step":\s*"([^"]*)""#).unwrap();
+    let next_step = next_step_regex
         .captures(&json_str)
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
@@ -49,7 +48,7 @@ pub fn parse_next_speaker_and_key_points(input: &str) -> (bool, String, String) 
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
 
-    (&continue_to_work_or_end == "TERMINATE", next_speaker, key_points)
+    (&continue_to_work_or_end == "TERMINATE", next_step, key_points)
 }
 
 pub fn parse_run_result_and_key_points(input: &str) -> (bool, String) {
@@ -62,14 +61,14 @@ pub fn parse_run_result_and_key_points(input: &str) -> (bool, String) {
     let continue_to_work_or_end_regex = Regex::new(
         r#""continue_to_work_or_end":\s*"([^"]*)""#
     ).unwrap();
-    let next_speaker_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
+    let next_step_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
 
     let continue_to_work_or_end = continue_to_work_or_end_regex
         .captures(&json_str)
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
 
-    let key_points = next_speaker_regex
+    let key_points = next_step_regex
         .captures(&json_str)
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
@@ -136,6 +135,16 @@ pub struct ImmutableAgent {
 }
 
 impl ImmutableAgent {
+    pub fn simple(name: &str, system_prompt: &str) -> Self {
+        ImmutableAgent {
+            name: name.to_string(),
+            system_prompt: system_prompt.to_string(),
+            llm_config: None,
+            tools_map_meta: String::from(""),
+            description: String::from(""),
+        }
+    }
+
     pub fn new(
         name: &str,
         system_prompt: &str,
@@ -152,38 +161,18 @@ impl ImmutableAgent {
         }
     }
 
-    pub fn coding_agent(llm_config: Option<Value>, tools_map_meta: &str) -> Self {
-        ImmutableAgent {
-            name: "coding_agent".to_string(),
-            system_prompt: CODE_PYTHON_SYSTEM_MESSAGE.to_string(),
-            llm_config,
-            tools_map_meta: tools_map_meta.to_string(),
-            description: "Specializes in generating clean, executable Python code for various tasks.".to_string(),
-        }
-    }
+    pub async fn send(&self, message_text: &str, conn: &Connection, next_step: &str) {
+        let _ = save_message(conn, &self.name, message_text, next_step).await;
 
-    pub fn user_proxy(llm_config: Option<Value>, tools_map_meta: &str) -> Self {
-        ImmutableAgent {
-            name: "user_proxy".to_string(),
-            system_prompt: USER_PROXY_SYSTEM_PROMPT.to_string(),
-            llm_config,
-            tools_map_meta: tools_map_meta.to_string(),
-            description: "Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements".to_string(),
-        }
-    }
-
-    pub async fn send(&self, message_text: &str, conn: &Connection, next_speaker: &str) {
-        let _ = save_message(conn, &self.name, message_text, next_speaker).await;
-
-        if next_speaker == "user_proxy" {
+        if next_step == "user_proxy" {
             let inp = self.get_user_feedback().await;
 
-            if inp == "stop" {  // Exit on any non-empty input
+            if inp == "stop" {
+                // Exit on any non-empty input
                 std::process::exit(0);
             } else {
                 println!("{:?}", inp);
-                std::process::exit(0);
-
+                // std::process::exit(0);
             }
         }
     }
@@ -212,7 +201,7 @@ impl ImmutableAgent {
         retrieve_most_recent_message(conn, &self.name).await
     }
 
-    pub async fn furter_task_by_toolcall(&self, input: &str, conn: &Connection) -> Option<String> {
+    pub async fn furter_task_by_toolcall(&self, input: &str) -> Option<String> {
         let messages = vec![
             Message {
                 role: Role::System,
@@ -263,7 +252,7 @@ impl ImmutableAgent {
                             .ok_or_else(|| anyhow::anyhow!("Missing 'key_points' argument"))
                             .ok()?
                             .to_string();
-                        let _ = self.start_coding(&key_points, conn).await;
+                        let _ = self.start_coding(&key_points).await;
 
                         String::from("code is being generated")
                     }
@@ -308,7 +297,7 @@ impl ImmutableAgent {
         match self.receive_message(conn).await {
             Some(message_text) => {
                 println!("{} received: {}", self.name, message_text);
-                let stop = self.a_generate_reply(&message_text, conn).await?;
+                let stop = self.a_generate_reply(&message_text).await?;
                 if stop_toggle && stop {
                     std::process::exit(0);
                 }
@@ -318,11 +307,7 @@ impl ImmutableAgent {
         }
     }
 
-    pub async fn a_generate_reply(
-        &self,
-        content_text: &str,
-        conn: &Connection
-    ) -> anyhow::Result<bool> {
+    pub async fn a_generate_reply(&self, content_text: &str) -> anyhow::Result<bool> {
         let user_prompt = format!("Here is the task for you: {:?}", content_text);
 
         let messages = vec![
@@ -346,27 +331,30 @@ impl ImmutableAgent {
 
         match &output.content {
             Content::Text(_out) => {
-                let (terminate_or_not, next_speaker, key_points) =
-                    self.assign_next_speaker_and_send(&_out, &user_prompt, conn).await;
+                let (terminate_or_not, next_step, key_points) = self.choose_next_step_and_(
+                    &_out,
+                    &user_prompt
+                ).await;
 
                 println!(
                     "terminate?: {:?}, speaker: {:?}, points: {:?}\n",
                     terminate_or_not.clone(),
-                    next_speaker.clone(),
+                    next_step.clone(),
                     key_points.clone()
                 );
+                if terminate_or_not {
+                    self.get_user_feedback().await;
+                }
                 return Ok(terminate_or_not);
             }
             _ => unreachable!(),
         }
-        Ok(false)
     }
 
-    pub async fn assign_next_speaker_and_send(
+    pub async fn choose_next_step_and_(
         &self,
         current_text_result: &str,
-        instruction: &str,
-        conn: &Connection
+        instruction: &str
     ) -> (bool, String, String) {
         let user_prompt = format!(
             "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
@@ -391,19 +379,18 @@ impl ImmutableAgent {
             "llm generation failure"
         );
         println!("{:?}", raw_reply.content_to_string().clone());
-        let (stop_here, speaker, key_points) = parse_next_speaker_and_key_points(
+        let (stop_here, speaker, key_points) = parse_next_step_and_key_points(
             &raw_reply.content_to_string()
         );
 
-        let _ = save_message(conn, &self.name, &key_points, &speaker).await;
+        // let _ = save_message(conn, &self.name, &key_points, &speaker).await;
         (stop_here, speaker, key_points)
     }
 
     pub async fn _is_termination(
         &self,
         current_text_result: &str,
-        instruction: &str,
-        conn: &Connection
+        instruction: &str
     ) -> (bool, String) {
         let user_prompt = format!(
             "Given the task: {:?}, examine current result: {}, please decide whether the task is done or not",
@@ -435,14 +422,10 @@ impl ImmutableAgent {
             &raw_reply.content_to_string()
         );
 
-        if terminate_or_not {
-            let _ = save_message(conn, &self.name, &key_points, "user_proxy").await;
-        }
-
         (terminate_or_not, key_points)
     }
 
-    pub async fn start_coding(&self, message_text: &str, conn: &Connection) -> anyhow::Result<()> {
+    pub async fn start_coding(&self, message_text: &str) -> anyhow::Result<()> {
         let formatter = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
         let user_prompt = formatter(&[message_text]);
 
@@ -471,20 +454,13 @@ impl ImmutableAgent {
                     if this_round_good {
                         let (terminate_or_not, key_points) = self._is_termination(
                             &exec_result,
-                            &user_prompt,
-                            conn
+                            &user_prompt
                         ).await;
                         println!("Termination Check: {}\n", terminate_or_not);
                         if terminate_or_not {
                             println!("key_points:{:?}\n", key_points);
 
-                            let _ = save_message(
-                                conn,
-                                "coding_agent",
-                                &key_points,
-                                "user_proxy"
-                            ).await;
-                            break;
+                            self.get_user_feedback().await;
                         }
                     }
 

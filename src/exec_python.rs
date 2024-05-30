@@ -1,8 +1,8 @@
 use anyhow;
 use regex::Regex;
-use rustpython::vm::Settings;
+// use rustpython::vm::Settings;
+use rustpython::vm;
 use rustpython::InterpreterConfig;
-use rustpython_vm as vm;
 
 pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
     let code = extract_code(code_wrapped_in_text);
@@ -54,27 +54,27 @@ pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
     })
 }
 
-pub fn run_python_vm(code: &str) {
-    let settings = Settings::default();
-    let settings = Settings::with_path(settings, "/Users/jichen/.cargo/bin/rustpython".to_owned());
-    // let settings = Settings::with_path(
-    //     settings,
-    //     "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/".to_owned(),
-    // );
+// pub fn run_python_vm(code: &str) {
+//     let settings = Settings::default();
+//     let settings = Settings::with_path(settings, "/Users/jichen/.cargo/bin/rustpython".to_owned());
+//     // let settings = Settings::with_path(
+//     //     settings,
+//     //     "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/".to_owned(),
+//     // );
 
-    vm::Interpreter
-        ::with_init(settings, |vm| {
-            vm.add_native_modules(rustpython_stdlib::get_module_inits());
-            vm.add_frozen(
-                rustpython_vm::py_freeze!(
-                    dir = "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/"
-                )
-            );
-        })
-        .enter(|vm| {
-            let _ = vm.run_code_string(vm.new_scope_with_builtins(), code, "<...>".to_owned());
-        });
-}
+//     vm::Interpreter
+//         ::with_init(settings, |vm| {
+//             vm.add_native_modules(rustpython_stdlib::get_module_inits());
+//             vm.add_frozen(
+//                 rustpython_vm::py_freeze!(
+//                     dir = "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/"
+//                 )
+//             );
+//         })
+//         .enter(|vm| {
+//             let _ = vm.run_code_string(vm.new_scope_with_builtins(), code, "<...>".to_owned());
+//         });
+// }
 
 pub fn run_python_func(func_path: &str) -> anyhow::Result<String, String> {
     match std::process::Command::new("/Users/jichen/.cargo/bin/rustpython").arg(func_path).output() {
