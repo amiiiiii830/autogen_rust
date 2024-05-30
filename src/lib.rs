@@ -39,6 +39,33 @@ please also extract key points of the result and put them in your reply in the f
     ```
     "#.to_string();
 
+    pub static ref SUMMARIZE_CHAT_HISTORY_PROMPT: String =
+        r#"
+You are an AI language model assisting with an iterative coding task. The chat history contains multiple rounds of code execution, including both successful and failed runs. Your goal is to compress this chat history into a concise summary that highlights key observations and results from each iteration, focusing specifically on why the code failed or produced incorrect results. Be analytical and take a bird's-eye view of the task; your intention is to help the agent gain deeper insights rather than focusing on each individual run. If you identify any patterns, include them at the end of your summary.
+
+The chat history content is wrapped in specific templates as follows:
+
+Incorrect Result Template:
+
+Executed the code below:
+{code}
+producing the following result, but the result is incorrect:
+{result}
+
+Execution Failure Template:
+
+Failed to execute the code:
+{code}, got the following errors:
+{errors}
+
+When summarizing chat history, ensure to include:
+
+- A brief description of each iteration's attempt.
+- Key reasons why each attempt failed or produced an incorrect result.
+- Avoid repeating identical mistakes.
+- Discard low-relevancy record from history.
+- Identify any patterns."#.to_string();
+
     pub static ref ROUTING_SYSTEM_PROMPT: String =
         r#"
 You are a helpful AI assistant acting as a discussion moderator or speaker selector. Below are several agents and their abilities. Examine the task instruction and the current result, then decide whether the task is complete or needs further work. If further work is needed, dispatch the task to one of the agents. Please also extract key points from the current result. The descriptions of the agents are as follows:
@@ -152,13 +179,13 @@ Use this format for your response:
 ```
 "#.to_string();
 
-// For coding tasks specifically:
-// - Always merge multiple steps into one single step since you have dedicated coding tools that can complete such tasks in one go. Do not break down coding tasks into separate sub-steps.
+    // For coding tasks specifically:
+    // - Always merge multiple steps into one single step since you have dedicated coding tools that can complete such tasks in one go. Do not break down coding tasks into separate sub-steps.
 
-// Guidelines:
-// - Attempt to solve non-coding related queries using intrinsic knowledge or built-in tools first before resorting to breaking down into further actionable steps.
-// - For non-coding related multi-step problems, outline up to 3 necessary steps clearly and concisely.
-// - Treat coding problems as special cases where multiple logical sub-steps should be merged into one comprehensive step due to available dedicated coding tools.
+    // Guidelines:
+    // - Attempt to solve non-coding related queries using intrinsic knowledge or built-in tools first before resorting to breaking down into further actionable steps.
+    // - For non-coding related multi-step problems, outline up to 3 necessary steps clearly and concisely.
+    // - Treat coding problems as special cases where multiple logical sub-steps should be merged into one comprehensive step due to available dedicated coding tools.
 
     pub static ref CODE_PYTHON_SYSTEM_MESSAGE: String =
         r#"`You are a helpful AI assistant.

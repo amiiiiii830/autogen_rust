@@ -69,19 +69,21 @@ async fn main() -> Result<()> {
     // );
 
     // let code = coding_agent.start_coding(&message, &conn).await?;
-
+ 
 //    let  res  = user_proxy.planning("go get today's weather forecast").await;
 
     // for _ in 1..9 {
-        // user_proxy.send("find fibonacci up to 15", &conn, "coding_agent").await;
-        coding_agent.run(&conn, false).await;
+        user_proxy.send("find fibonacci up to 15", &conn, "user_proxy").await;
+      let res   =  user_proxy.get_user_feedback().await;
+        user_proxy.send(&res, &conn, "user_proxy").await;
+     // coding_agent.run(&conn, false).await;
         // user_proxy.run(&conn, true).await;
 
         // coding_agent.send(message.clone(), &conn, Some("router_agent")).await;
 
         // router_agent.send(message.clone(), &conn, Some("router_agent")).await;
     // }
-    // println!("{:?}", res);
+    // println!("{:?}", inp);
 
     // let messages = vec![
     //     Message {

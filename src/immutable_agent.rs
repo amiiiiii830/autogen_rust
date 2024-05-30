@@ -174,6 +174,38 @@ impl ImmutableAgent {
 
     pub async fn send(&self, message_text: &str, conn: &Connection, next_speaker: &str) {
         let _ = save_message(conn, &self.name, message_text, next_speaker).await;
+
+        if next_speaker == "user_proxy" {
+            let inp = self.get_user_feedback().await;
+
+            if inp == "stop" {  // Exit on any non-empty input
+                std::process::exit(0);
+            } else {
+                println!("{:?}", inp);
+                std::process::exit(0);
+
+            }
+        }
+    }
+
+    pub async fn get_user_feedback(&self) -> String {
+        use std::io::{ self, Write };
+        print!("User input:");
+
+        io::stdout().flush().expect("Failed to flush stdout");
+
+        let mut input = String::new();
+
+        io::stdin().read_line(&mut input).expect("Failed to read line");
+
+        if let Some('\n') = input.chars().next_back() {
+            input.pop();
+        }
+        if let Some('\r') = input.chars().next_back() {
+            input.pop();
+        }
+
+        return input;
     }
 
     pub async fn receive_message(&self, conn: &Connection) -> Option<String> {
@@ -323,7 +355,7 @@ impl ImmutableAgent {
                     next_speaker.clone(),
                     key_points.clone()
                 );
-              return  Ok(terminate_or_not);
+                return Ok(terminate_or_not);
             }
             _ => unreachable!(),
         }
@@ -470,15 +502,60 @@ impl ImmutableAgent {
                     };
 
                     messages.push(result_message);
+
+                    if messages.len() > 5 {
+                        messages = compress_chat_history(&messages.clone()).await;
+                    }
                 }
-                Content::ToolCall(_call) => {
-                    // let func = call.name;
-                    // let args = call.arguments.unwrap_or_default();
-                    // Execute the tool call function
-                    // func(args);
-                }
+                _ => unreachable!(),
             }
         }
         Ok(())
     }
+}
+
+pub async fn compress_chat_history(message_history: &Vec<Message>) -> Vec<Message> {
+    let message_history = message_history.clone();
+    let (system_messages, messages) = message_history.split_at(2);
+    let mut system_messages = system_messages.to_vec();
+
+    let chat_history_text = messages
+        .into_iter()
+        .map(|m| m.content_to_string())
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let messages = vec![
+        Message {
+            role: Role::System,
+            name: None,
+            content: Content::Text(FURTER_TASK_BY_TOOLCALL_PROMPT.to_string()),
+        },
+        Message {
+            role: Role::User,
+            name: None,
+            content: Content::Text(chat_history_text),
+        }
+    ];
+
+    let max_token = 1000u16;
+    let output: LlamaResponseMessage = chat_inner_async_llama(
+        messages.clone(),
+        max_token
+    ).await.expect("Failed to generate reply");
+
+    match output.content {
+        Content::Text(compressed) => {
+            let message = Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(compressed),
+            };
+
+            system_messages.push(message);
+        }
+        _ => unreachable!(),
+    }
+
+    system_messages
 }
