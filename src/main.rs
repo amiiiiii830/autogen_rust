@@ -58,9 +58,9 @@ async fn main() -> Result<()> {
 
     use tokio::{ select, signal };
 
-    let mut agent = ImmutableAgent::simple("placeholder", "");
-    let mut coding_agent = ImmutableAgent::simple("coding_agent", "");
-    let mut user_proxy = ImmutableAgent::simple("user_proxy", "");
+    let agent = ImmutableAgent::simple("placeholder", "");
+    let coding_agent = ImmutableAgent::simple("coding_agent", "");
+    let user_proxy = ImmutableAgent::simple("user_proxy", "");
 
     // loop {
     //     select! {
@@ -89,9 +89,9 @@ async fn main() -> Result<()> {
 
     // for _ in 1..9 {
 
-    user_proxy.run(&conn, true).await;
+    let _ = user_proxy.run(&conn, true).await;
     let res = user_proxy.get_user_feedback().await;
-    user_proxy.send(&res, &conn, "user_proxy").await;
+  let _=  user_proxy.send(&res, &conn, "user_proxy").await;
     // coding_agent.run(&conn, false).await;
     // user_proxy.run(&conn, true).await;
 

@@ -1,11 +1,11 @@
 use crate::exec_python::*;
 use crate::llama_structs::*;
+use crate::utils::*;
 use crate::llm_llama_local::*;
 use crate::message_store::*;
 use crate::webscraper_hook::get_webpage_text;
 use crate::webscraper_hook::search_bing;
 use crate::{
-    ROUTING_SYSTEM_PROMPT,
     PLANNING_SYSTEM_PROMPT,
     IS_TERMINATION_SYSTEM_PROMPT,
     CODE_PYTHON_SYSTEM_MESSAGE,
@@ -19,85 +19,23 @@ use async_openai::types::Role;
 use rusqlite::Connection;
 use serde::{ Deserialize, Serialize };
 use serde_json::{ Value };
-use regex::Regex;
 
-pub fn parse_next_step_and_key_points(input: &str) -> (bool, String, String) {
-    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
-    let json_str = json_regex
-        .captures(input)
-        .and_then(|cap| cap.get(0))
-        .map_or(String::new(), |m| m.as_str().to_string());
+const INTERNAL_ROUTING_PROMPT: &'static str = r#"
+You are a helpful AI assistant acting as a task dispatcher. Below are several paths that an agent can take and their abilities. Examine the task instruction and the current result, then decide whether the task is complete or needs further work. If further work is needed, dispatch the task to one of the agents. Please also extract key points from the current result. The descriptions of the agents are as follows:
 
-    let continue_to_work_or_end_regex = Regex::new(
-        r#""continue_to_work_or_end":\s*"([^"]*)""#
-    ).unwrap();
-    let continue_to_work_or_end = continue_to_work_or_end_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
+1. **coding_python**: Specializes in generating clean, executable Python code for various tasks.
+2. **user_proxy**: Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements; it is also responsible for receiving final task results.
 
-    let next_step_regex = Regex::new(r#""next_step":\s*"([^"]*)""#).unwrap();
-    let next_step = next_step_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    let key_points_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
-    let key_points = key_points_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    (&continue_to_work_or_end == "TERMINATE", next_step, key_points)
+Use this format to reply:
+```json
+{
+    "continue_or_terminate": "TERMINATE" or "CONTINUE",
+    "next_task_handler": "some_task_handler" (leave empty if "TERMINATE"),
+    "key_points": ["point1", "point2", ...]
 }
-
-pub fn parse_run_result_and_key_points(input: &str) -> (bool, String) {
-    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
-    let json_str = json_regex
-        .captures(input)
-        .and_then(|cap| cap.get(0))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    let continue_to_work_or_end_regex = Regex::new(
-        r#""continue_to_work_or_end":\s*"([^"]*)""#
-    ).unwrap();
-    let next_step_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
-
-    let continue_to_work_or_end = continue_to_work_or_end_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    let key_points = next_step_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    (&continue_to_work_or_end == "TERMINATE", key_points)
-}
-
-pub fn parse_planning_steps(input: &str) -> Vec<String> {
-    let steps_regex = Regex::new(r#""steps_to_take":\s*(\[[^\]]*\])"#).unwrap();
-    let steps_str = steps_regex
-        .captures(input)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    if steps_str.is_empty() {
-        eprintln!("Failed to extract 'steps_to_take' from input.");
-        return vec![];
-    }
-
-    let parsed_steps: Vec<String> = match serde_json::from_str(&steps_str) {
-        Ok(val) => val,
-        Err(_) => {
-            eprintln!("Failed to parse extracted 'steps_to_take' as JSON.");
-            return vec![];
-        }
-    };
-
-    parsed_steps
-}
+```
+Dispatch to user_proxy when all tasks are complete.
+"#;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -355,7 +293,7 @@ impl ImmutableAgent {
         &self,
         current_text_result: &str,
         instruction: &str
-    ) -> (bool, String, String) {
+    ) -> (bool, Option<String>, String) {
         let user_prompt = format!(
             "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
             instruction,
@@ -366,7 +304,7 @@ impl ImmutableAgent {
             Message {
                 role: Role::System,
                 name: None,
-                content: Content::Text(ROUTING_SYSTEM_PROMPT.to_string()),
+                content: Content::Text(INTERNAL_ROUTING_PROMPT.to_string()),
             },
             Message {
                 role: Role::User,
@@ -379,12 +317,13 @@ impl ImmutableAgent {
             "llm generation failure"
         );
         println!("{:?}", raw_reply.content_to_string().clone());
-        let (stop_here, speaker, key_points) = parse_next_step_and_key_points(
-            &raw_reply.content_to_string()
+        let (stop_here, speaker, key_points) = parse_next_move_and_(
+            &raw_reply.content_to_string(),
+            Some("next_task_handler")
         );
 
         // let _ = save_message(conn, &self.name, &key_points, &speaker).await;
-        (stop_here, speaker, key_points)
+        (stop_here, speaker, key_points.join(","))
     }
 
     pub async fn _is_termination(
@@ -418,11 +357,12 @@ impl ImmutableAgent {
 
         println!("_is_termination raw_reply: {:?}", raw_reply.content_to_string());
 
-        let (terminate_or_not, key_points) = parse_run_result_and_key_points(
-            &raw_reply.content_to_string()
+        let (terminate_or_not, _, key_points) = parse_next_move_and_(
+            &raw_reply.content_to_string(),
+            None
         );
 
-        (terminate_or_not, key_points)
+        (terminate_or_not, key_points.join(","))
     }
 
     pub async fn start_coding(&self, message_text: &str) -> anyhow::Result<()> {

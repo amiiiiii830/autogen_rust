@@ -1,5 +1,6 @@
 use crate::llama_structs::*;
 use crate::llm_llama_local::*;
+use crate::utils::*;
 use crate::message_store::*;
 use crate::{
     ROUTING_SYSTEM_PROMPT,
@@ -305,7 +306,7 @@ impl ConversableAgent {
 
         println!("_is_termination raw_reply: {:?}", raw_reply.content_to_string());
 
-        let (terminate_or_not, key_points) = parse_run_result_and_key_points(
+        let (terminate_or_not, key_points) = parse_next_move_and_(
             &raw_reply.content_to_string()
         );
 
@@ -363,80 +364,4 @@ pub async fn compress_chat_history(message_history: &Vec<Message>) -> Vec<Messag
     system_messages
 }
 
-pub fn parse_next_speaker_and_key_points(input: &str) -> (bool, String, String) {
-    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
-    let json_str = json_regex
-        .captures(input)
-        .and_then(|cap| cap.get(0))
-        .map_or(String::new(), |m| m.as_str().to_string());
 
-    let continue_to_work_or_end_regex = Regex::new(
-        r#""continue_to_work_or_end":\s*"([^"]*)""#
-    ).unwrap();
-    let continue_to_work_or_end = continue_to_work_or_end_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    let next_speaker_regex = Regex::new(r#""next_speaker":\s*"([^"]*)""#).unwrap();
-    let next_speaker = next_speaker_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    let key_points_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
-    let key_points = key_points_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    (&continue_to_work_or_end == "TERMINATE", next_speaker, key_points)
-}
-
-pub fn parse_run_result_and_key_points(input: &str) -> (bool, String) {
-    let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
-    let json_str = json_regex
-        .captures(input)
-        .and_then(|cap| cap.get(0))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    let continue_to_work_or_end_regex = Regex::new(
-        r#""continue_to_work_or_end":\s*"([^"]*)""#
-    ).unwrap();
-    let next_speaker_regex = Regex::new(r#""key_points_of_current_result":\s*"([^"]*)""#).unwrap();
-
-    let continue_to_work_or_end = continue_to_work_or_end_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    let key_points = next_speaker_regex
-        .captures(&json_str)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    (&continue_to_work_or_end == "TERMINATE", key_points)
-}
-
-pub fn parse_planning_steps(input: &str) -> Vec<String> {
-    let steps_regex = Regex::new(r#""steps_to_take":\s*(\[[^\]]*\])"#).unwrap();
-    let steps_str = steps_regex
-        .captures(input)
-        .and_then(|cap| cap.get(1))
-        .map_or(String::new(), |m| m.as_str().to_string());
-
-    if steps_str.is_empty() {
-        eprintln!("Failed to extract 'steps_to_take' from input.");
-        return vec![];
-    }
-
-    let parsed_steps: Vec<String> = match serde_json::from_str(&steps_str) {
-        Ok(val) => val,
-        Err(_) => {
-            eprintln!("Failed to parse extracted 'steps_to_take' as JSON.");
-            return vec![];
-        }
-    };
-
-    parsed_steps
-}

@@ -1,6 +1,7 @@
 // pub mod conversable_agent;
 // pub mod groupchat;
 pub mod immutable_agent;
+pub mod utils;
 pub mod exec_python;
 // pub mod groupchat;
 pub mod llama_structs;
@@ -21,8 +22,8 @@ lazy_static! {
 please also extract key points of the result and put them in your reply in the following format:
     ```json
     {
-        "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
-        "key_points_of_current_result": "key points"
+        "continue_or_terminate": "TERMINATE" or "CONTINUE",
+        "key_points": "key points"
     }
     ```
     "#.to_string();
@@ -32,8 +33,8 @@ please also extract key points of the result and put them in your reply in the f
     You are a helpful AI assistant acting as a gatekeeper in a project. You will be given a task instruction and the current result, please decide whether the task is done or not, please also extract key points of current result and put them in your reply in the following format:
     ```json
     {
-        "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
-        "key_points_of_current_result": "key points"
+        "continue_or_terminate": "TERMINATE" or "CONTINUE",
+        "key_points": ["key points", ...]
     }
     ```
     "#.to_string();
@@ -65,23 +66,7 @@ When summarizing chat history, ensure to include:
 - Discard low-relevancy record from history.
 - Identify any patterns."#.to_string();
 
-    pub static ref ROUTING_SYSTEM_PROMPT: String =
-        r#"
-You are a helpful AI assistant acting as a discussion moderator or speaker selector. Below are several agents and their abilities. Examine the task instruction and the current result, then decide whether the task is complete or needs further work. If further work is needed, dispatch the task to one of the agents. Please also extract key points from the current result. The descriptions of the agents are as follows:
 
-1. **coding_agent**: Specializes in generating clean, executable Python code for various tasks.
-2. **user_proxy**: Represents the user by delegating tasks to agents, reviewing their outputs, and ensuring tasks meet user requirements; it is also responsible for receiving final task results.
-
-Use this format to reply:
-```json
-{
-    "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
-    "next_speaker": "some_speaker" (leave empty if "TERMINATE"),
-    "key_points_of_current_result": "key points"
-}
-```
-Dispatch to user_proxy when all tasks are complete.
-"#.to_string();
 
     pub static ref ROUTER_AGENT_SYSTEM_PROMPT: String =
         r#"
@@ -94,7 +79,7 @@ You are a helpful AI assistant acting as a discussion moderator or speaker selec
 Use the following format to reply:
 ```json
 {
-    "continue_to_work_or_end": "TERMINATE" or "CONTINUE",
+    "continue_or_terminate": "TERMINATE" or "CONTINUE",
     "next_speaker": "some_speaker" or empty in case "TERMINATE" in the previous field
 }
 ```
