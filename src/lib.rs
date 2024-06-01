@@ -1,17 +1,83 @@
 // pub mod conversable_agent;
 // pub mod groupchat;
+pub mod exec_python;
 pub mod immutable_agent;
 pub mod utils;
-pub mod exec_python;
 // pub mod groupchat;
 pub mod llama_structs;
 pub mod llm_llama_local;
 pub mod message_store;
 pub mod webscraper_hook;
 use lazy_static::lazy_static;
-use std::sync::{ Arc, Mutex };
+use std::sync::{Arc, Mutex};
 
 type FormatterFn = Box<dyn (Fn(&[&str]) -> String) + Send + Sync>;
+
+static _TEMPLATE_PROMPT: &'static str = r#"
+I'm creating a large language model prompt that use these strategies:
+1. Goal directed planning
+2. Chain of thoughts/think step by step
+3. Use template to record and guide thought process
+4. Direct model to fill in the desired final reply in template
+
+Need you to do polishing over these modular sections according to the raw material 
+// below is the task description, some steps layed out already, but there may be steps missing, and the break down of the steps may not be ideal and the wording/logic may need touching up
+
+You are an AI assistant. Your task is to determine whether a question requires grounding in real-world date, time, location, physics.
+
+// here is guideline on how to think through the task step by step, 
+When given a task, please follow these steps to think it through and then act:
+
+Identify Temporal Relevance: Determine if the question requires current or time-sensitive information. Today's date is 2024-06-01.
+Check for Location Specificity: Identify if the question is location-specific.
+If the answer depends on real-time data or specific locations, suggest using today's date to cross-validate its reply; otherwise, suggest sources to get grounding data.
+Remember that you are a dispatcher; you DO NOT work on tasks yourself.
+
+//here are the templates to record and guide agent to write down its thoughts, based on the handling of certain tasks
+In your reply, list out your think-aloud steps clearly:
+
+Example 1:
+
+When tasked with "What is the weather like in New York?" reshape your answer as follows:
+
+{{
+    \"my_thought_process\": [
+     \"my_goal\": \"goal is to identify whether grounding is needed for this task\",
+       \"Determine if the question requires current or time-sensitive information: YES\",
+        \"Provide assistance to agent for this task grounding information: today's date is xxxx-xx-xx \",
+        \"Echo original input verbatim in key_points section\"
+    ],
+    \"key_points\": [\"today's date is xxxx-xx-xx, What is the weather like in New York\"]
+}}
+
+Example 2:
+
+When tasked with "Who killed John Lennon?" reshape your answer as follows:
+
+{{
+    \"my_thought_process\": [
+    \"my_goal\": \"goal is to identify whether grounding is needed for this task\",
+        \"Determine if the question requires current or time-sensitive information: NO\",
+        \"Echo original input verbatim in key_points section\"
+    ],
+    \"key_points\": [\"Who killed John Lennon?"]
+}}
+
+
+//here is the template for agent to record the final result that the user is hoping for, you don't need to touch it
+Use this format for your response:
+```json
+{
+"my_thought_process": [
+"thought_process_one: my judgement at this step",
+"...",
+"though_process_N: : my judgement at this step"
+],
+\"grounded_or_not\": \"YES\" or \"NO\",
+\"key_points\": [\"point1\", \"point2\", ...]
+}
+```
+"#;
 
 lazy_static! {
     pub static ref USER_PROXY_SYSTEM_PROMPT: String =
@@ -65,8 +131,6 @@ When summarizing chat history, ensure to include:
 - Avoid repeating identical mistakes.
 - Discard low-relevancy record from history.
 - Identify any patterns."#.to_string();
-
-
 
     pub static ref ROUTER_AGENT_SYSTEM_PROMPT: String =
         r#"
@@ -422,7 +486,6 @@ For each function call return a json object with function name and arguments wit
     );
 }
 
-
 /* pub async fn entry(inp: &str) {
     use tokio::select;
 
@@ -441,60 +504,89 @@ For each function call return a json object with function name and arguments wit
     }
 } */
 
-const DRAFT: &'static str = r#"
-You are a helpful AI assistant with extensive capabilities:
-You can answer many questions and provide a wealth of knowledge from within yourself.
+const _DRAFT_TOOLCALL_PROMPT: &'static str =         r#"
+I'm creating a large language model prompt that use these strategies:
+1. Goal directed planning
+2. Chain of thoughts/think step by step
+3. Use template to record and guide thought process
+4. Direct model to fill in the desired final reply in template
 
-To  text:
+Need you to do polishing over these modular sections according to the raw material 
+// below is the task description, some steps layed out already, but there may be steps missing, and the break down of the steps may not be ideal and the wording/logic may need touching up
+
+You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: 
+
+// here is guideline on how to think through the task step by step, 
+The function "code_with_python" generates clean, executable Python code for various tasks based on the user input. For example, calling "code_with_python("key_points": "Create a Python script that reads a CSV file and plots a graph")" will generate Python code that performs this task.
+
+The function "get_webpage_text" retrieves all text content from a given URL, which can be useful for extracting information from web pages or articles. For example, calling "get_webpage_text("https://example.com")" will fetch the text from Example.com.
+
+The function "search_with_bing" performs an internet search using Bing and returns relevant results based on the query provided by the user. This can be useful for finding up-to-date information on various topics. For example, "search_with_bing("latest AI research trends")" will return search results related to the latest trends in AI research.
+
+//here are the templates to for the function objects:
+
+{
+    "name": "get_webpage_text",
+    "description": "Retrieves all text content from a specified website URL.",
+    "parameters": {
+        "url": {
+            "type": "string",
+            "description": "The URL of the website from which to fetch the text content"
+        }
+    },
+    "required": ["url"],
+    "type": "object"
+}
+
+{
+    "name": "code_with_python",
+        "description": "Generates clean, executable Python code for various tasks",
+        "parameters": {
+            "key_points": {
+                "type": "string",
+                "description": "Key points from input that describes what kind of problem needs to be solved with Python code."
+            }
+        },
+        "required": ["key_points"],
+        "type": "object"
+}
+
+{
+"name": "search_with_bing",
+"description": "Conducts an internet search using Bing search engine and returns relevant results.",
+"parameters": { 
+     "query": { 
+         "type": "string", 
+         "description": "The search query to be executed on Bing" 
+      } 
+ }, 
+ "required": ["query"], 
+ "type": "object"
+}
+
+//Here are examples of toolcalls for different scenarios, you may need to synchronize the example with above cases
+Examples of toolcalls for different scenarios and tools:
+1. To retrieve webpage text:
 <tool_call>
 {"arguments":{"url":"https://example.com"}, 
 "name":"get_webpage_text"}
 </tool_call>
-To generate Python code:
+
+2. To generate Python code:
 <tool_call>
 {"arguments":{"key_points":"Create a Python script that reads data from an API and stores it in a database"}, 
 "name":"code_with_python"}
 </tool_call>
 
-When given a task, please follow these steps to think it through and then act:
-1. Create a concise reply
-2. Analyze in order to obtain a correct reply what are your steps to to do it?
-- Consider this as special cases for one-step completion, which should be placed in the "steps_to_take" section.
-- If determined that it can be answered with intrinsic knowledge, DO NOT try to answer it yourself. Pass the task to the next agent by using the original input text verbatim as one single step to fill in the "steps_to_take" section.
-2. Gauge whether the task is most likely to be best completed with coding. If so, merge multiple logical sub-steps into one comprehensive step due to available dedicated coding tools.
-3. If neither intrinsic knowledge nor built-in tools suffice, strategize and outline up to 3 necessary steps to achieve the final goal.
-4. Check whether you've slipped your mind and broken down a "coding task" into baby steps; if so, merge these steps back into one.
-5. Fill out the "steps_to_take" section of your reply template.
-Remember that you are a dispatcher; you DO NOT work on tasks yourself.
+3. To perform an internet search:
+<tool_call>
+{"arguments":{"query":"best practices in software development"}, 
+"name":"search_with_bing"}
+</tool_call>
 
-In your reply, list out your think-aloud steps clearly:
-
-Example:
-When tasked with "calculate prime numbers up to 100," you should reshape your answer as follows: 
-{
-"my_thought_process": [
-"Determine if this task can be done in single step: NO",
-"Determine if this task can be done with coding: YES,
-"Strategize on breaking task into logical subtasks: [
-"Define a function to check if a number is prime or not.",
-"Use a loop iterating through numbers from 2 up-to 100.",
-"Call this function within loop." ]",
-"Check for unnecessary breakdowns especially for 'coding' tasks: made a mistake, should be a coding task",
-"Fill out 'steps_to_take' accordingly: merge steps into one [
-"Define a function that checks if numbers are prime. Use this function within loop iterating through numbers from 2 up-to 100. Print each number if it's prime." ]"
-],
-"steps_to_take": [ "Define a function that checks if numbers are prime. Use this function within loop iterating through numbers from 2 up-to 100. Print each number if it's prime." ]
-}
-
-Example:
-
-When tasked with "find out how old is Barack Obama", you should reshape your answer as follows: 
-{
-"my_thought_process": [
-"Determine if this task can be done in single step: YES",
-"Can be answered with intrinsic knowledge: YES, use original input to fill "steps_to_take" section"
-],
-"steps_to_take": [
-"find out how old is Barack Obama"
-]
-}"#;
+//here is the template for agent to record the final result that the user is hoping for, you don't need to touch it
+For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+<tool_call>
+{"arguments": <args-dict>, 
+"name":"<function-name>"}
+</tool_call>"#;

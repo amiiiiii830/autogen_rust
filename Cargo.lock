@@ -173,9 +173,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-openai",
+ "chrono",
  "dotenv",
  "futures",
  "lazy_static",
+ "once_cell",
  "regex",
  "reqwest",
  "rusqlite",

@@ -1,4 +1,4 @@
-use reqwest::header::{ HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT };
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -89,13 +89,18 @@ pub async fn search_with_bing(query: &str) -> anyhow::Result<String> {
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(USER_AGENT, HeaderValue::from_static("MyClient/1.0.0"));
 
-    headers.insert("Ocp-Apim-Subscription-Key", HeaderValue::from_str(&bing_key)?);
+    headers.insert(
+        "Ocp-Apim-Subscription-Key",
+        HeaderValue::from_str(&bing_key)?,
+    );
     let client = Client::builder().default_headers(headers).build()?;
 
     let res = client.get(&url_str).send().await?.text().await?;
 
     let search_response = serde_json::from_slice::<SearchResponse>(res.as_bytes())?;
-    let out = search_response.webPages.value
+    let out = search_response
+        .webPages
+        .value
         .iter()
         .map(|val| format!("webpage at {} states: {}", val.url, val.snippet))
         .collect::<Vec<String>>()

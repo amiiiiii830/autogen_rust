@@ -135,9 +135,7 @@ impl From<Message> for ChatCompletionRequestMessage {
                 })
             }
             Role::User => ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
-                content: ChatCompletionRequestUserMessageContent::Text(
-                    message.content_to_string(),
-                ),
+                content: ChatCompletionRequestUserMessageContent::Text(message.content_to_string()),
                 role: Role::User,
                 name: message.name,
             }),

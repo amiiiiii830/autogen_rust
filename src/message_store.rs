@@ -1,7 +1,7 @@
 use crate::immutable_agent::*;
 use crate::llama_structs::*;
 use async_openai::types::Role;
-use rusqlite::{ params, Connection, Result };
+use rusqlite::{params, Connection, Result};
 
 trait RoleToString {
     fn to_string(&self) -> String;
@@ -50,7 +50,7 @@ pub async fn create_message_store_table(conn: &Connection) -> Result<()> {
             tokens_count INTEGER,
             next_speaker TEXT
         )",
-        []
+        [],
     )?;
     Ok(())
 }
@@ -80,7 +80,7 @@ pub async fn save_message(
     conn: &Connection,
     agent_name: &str,
     message_text: &str,
-    next_speaker: &str
+    next_speaker: &str,
 ) -> Result<()> {
     let tokens_count = message_text.split_whitespace().count();
 
@@ -119,7 +119,7 @@ pub async fn create_agent_store_table(conn: &Connection) -> Result<()> {
             recent_instruction TEXT,
             tools_map_meta TEXT
         )",
-        []
+        [],
     )?;
     Ok(())
 }
@@ -129,7 +129,7 @@ pub async fn register_agent(
     agent_name: &str,
     agent_description: &str,
     system_prompt: &str,
-    tools_map_meta: &str
+    tools_map_meta: &str,
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO AgentStore (agent_name, agent_description, current_system_prompt, tools_map_meta) VALUES (?1, ?2, ?3, ?4)",
@@ -141,13 +141,11 @@ pub async fn register_agent(
 pub async fn get_agent_names_and_abilities(conn: &Connection) -> Result<String> {
     let mut stmt = conn.prepare("SELECT agent_name, agent_description FROM AgentStore")?;
     let rows = stmt.query_map([], |row| {
-        Ok(
-            format!(
-                "agent_name: {:?}, abilities: {:?}",
-                &row.get::<_, String>(0)?,
-                &row.get::<_, String>(1)?
-            )
-        ) // Specify type as String
+        Ok(format!(
+            "agent_name: {:?}, abilities: {:?}",
+            &row.get::<_, String>(0)?,
+            &row.get::<_, String>(1)?
+        )) // Specify type as String
     })?;
 
     let mut agent_names = String::new();
@@ -160,19 +158,18 @@ pub async fn get_agent_names_and_abilities(conn: &Connection) -> Result<String> 
 pub async fn update_system_prompt_db(
     conn: &Connection,
     agent_name: &str,
-    new_prompt: &str
+    new_prompt: &str,
 ) -> Result<()> {
     conn.execute(
         "UPDATE AgentStore SET current_system_prompt = ?1 WHERE agent_name = ?2",
-        params![new_prompt, agent_name]
+        params![new_prompt, agent_name],
     )?;
     Ok(())
 }
 
 pub async fn get_system_prompt_db(conn: &Connection, agent_name: &str) -> Result<String> {
-    let mut stmt = conn.prepare(
-        "SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1"
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1")?;
     let mut rows = stmt.query(params![agent_name])?;
 
     if let Some(row) = rows.next()? {
@@ -196,9 +193,8 @@ pub async fn get_tools_meta_db(conn: &Connection, agent_name: &str) -> Result<St
 }
 
 pub async fn get_system_message_db(conn: &Connection, agent_name: &str) -> Result<Message> {
-    let mut stmt = conn.prepare(
-        "SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1"
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT current_system_prompt FROM AgentStore WHERE agent_name = ?1")?;
     let mut rows = stmt.query(params![agent_name])?;
 
     if let Some(row) = rows.next()? {
@@ -216,17 +212,18 @@ pub async fn get_system_message_db(conn: &Connection, agent_name: &str) -> Resul
 pub async fn save_recent_instruction(
     conn: &Connection,
     agent_name: &str,
-    recent_instruction: &str
+    recent_instruction: &str,
 ) -> Result<()> {
     conn.execute(
         "UPDATE AgentStore SET recent_instruction = ?1 WHERE agent_name = ?2",
-        params![recent_instruction, agent_name]
+        params![recent_instruction, agent_name],
     )?;
     Ok(())
 }
 
 pub async fn recent_instruction_db(conn: &Connection, agent_name: &str) -> Result<String> {
-    let mut stmt = conn.prepare("SELECT recent_instruction FROM AgentStore WHERE agent_name = ?1")?;
+    let mut stmt =
+        conn.prepare("SELECT recent_instruction FROM AgentStore WHERE agent_name = ?1")?;
     let mut rows = stmt.query(params![agent_name])?;
 
     if let Some(row) = rows.next()? {

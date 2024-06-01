@@ -1,27 +1,86 @@
 use crate::exec_python::*;
 use crate::llama_structs::*;
-use crate::utils::*;
 use crate::llm_llama_local::*;
 use crate::message_store::*;
+use crate::utils::*;
 use crate::webscraper_hook::get_webpage_text;
 use crate::webscraper_hook::search_with_bing;
-use crate:: {
-    PLANNING_SYSTEM_PROMPT,
-    IS_TERMINATION_SYSTEM_PROMPT,
-    CODE_PYTHON_SYSTEM_MESSAGE,
-    ITERATE_CODING_FAIL_TEMPLATE,
-    ITERATE_CODING_START_TEMPLATE,
-    ITERATE_CODING_INCORRECT_TEMPLATE,
-    FURTER_TASK_BY_TOOLCALL_PROMPT,
+use crate::{
+    CODE_PYTHON_SYSTEM_MESSAGE, FURTER_TASK_BY_TOOLCALL_PROMPT, IS_TERMINATION_SYSTEM_PROMPT,
+    ITERATE_CODING_FAIL_TEMPLATE, ITERATE_CODING_INCORRECT_TEMPLATE, ITERATE_CODING_START_TEMPLATE,
 };
 use anyhow;
 use async_openai::types::Role;
+use chrono::Utc;
 use rusqlite::Connection;
-use serde:: { Deserialize, Serialize };
-use serde_json:: { Value };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-const INTERNAL_ROUTING_PROMPT: &'static str =
-    r#"
+use once_cell::sync::Lazy;
+
+pub static GROUNDING_CHECK_TEMPLATE: Lazy<String> = Lazy::new(|| {
+    let today = Utc::now().format("%Y-%m-%dT").to_string();
+    format!(
+        r#"
+<|im_start|>system You are an AI assistant. Your task is to determine whether a question requires grounding in real-world date, time, location, or physics.
+
+When given a task, please follow these steps to think it through and then act:
+
+Identify Temporal Relevance: Determine if the question requires current or time-sensitive information. Note that today's date is {}.
+Check for Location Specificity: Identify if the question is location-specific.
+Determine Real-time Data Dependency: Assess if the answer depends on real-time data or specific locations.
+Suggest Grounding Information: If grounding is needed, suggest using today's date to cross-validate the reply. Otherwise, suggest reliable sources to obtain the necessary grounding data.
+
+Remember that you are a dispatcher; you DO NOT work on tasks yourself. Your role is to direct the process.
+
+In your reply, list out your think-aloud steps clearly:
+
+Example 1:
+
+When tasked with "What is the weather like in New York?" reshape your answer as follows:
+
+{{
+    \"my_thought_process\": [
+        \"my_goal: goal is to identify whether grounding is needed for this task\",
+        \"Determine if the question requires current or time-sensitive information: YES\",
+        \"Provide assistance to agent for this task grounding information: today's date is xxxx-xx-xx\",
+        \"Echo original input verbatim in key_points section\"
+    ],
+    \"key_points\": [\"today's date is xxxx-xx-xx, What is the weather like in New York\"]
+}}
+
+Example 2:
+
+When tasked with \"Who killed John Lennon?\" reshape your answer as follows:
+
+{{
+    \"my_thought_process\": [
+        \"my_goal: goal is to identify whether grounding is needed for this task\",
+        \"Determine if the question requires current or time-sensitive information: NO\",
+        \"Echo original input verbatim in key_points section\"
+    ],
+    \"key_points\": [\"Who killed John Lennon?\"]
+}}
+
+Use this format for your response:
+
+```json
+{{
+    \"my_thought_process\": [
+        \"my_goal: goal is to identify whether grounding is needed for this task\",
+        \"thought_process_one: my judgement at this step\",
+        \"...\",
+        \"thought_process_N: my judgement at this step\"
+    ],
+    \"grounded_or_not\": \"YES\" or \"NO\",
+    \"key_points\": [\"point1\", \"point2\", ...]
+}}
+"#,
+        today
+    )
+});
+
+const INTERNAL_ROUTING_PROMPT: &'static str = r#"
 You are a helpful AI assistant acting as a task dispatcher. Below are several paths that an agent can take and their abilities. Examine the task instruction and the current result, then decide whether the task is complete or needs further work. If further work is needed, dispatch the task to one of the agents. Please also extract key points from the current result. The descriptions of the agents are as follows:
 
 1. **coding_python**: Specializes in generating clean, executable Python code for various tasks.
@@ -29,7 +88,7 @@ You are a helpful AI assistant acting as a task dispatcher. Below are several pa
 
 Use this format to reply:
 ```json
-{
+{{
     "continue_or_terminate": "TERMINATE" or "CONTINUE",
     "next_task_handler": "some_task_handler" (leave empty if "TERMINATE"),
     "key_points": ["point1", "point2", ...]
@@ -38,8 +97,7 @@ Use this format to reply:
 Dispatch to user_proxy when all tasks are complete.
 "#;
 
-const NEXT_STEP_PLANNING: &'static str =
-    r#"
+const NEXT_STEP_PLANNING: &'static str = r#"
     You are a helpful AI assistant with extensive capabilities. Your goal is to help complete tasks and create plausible answers grounded in real-world history of events and physics with minimal steps.
 
     You have three built-in tools to solve problems:
@@ -143,8 +201,7 @@ Use this format for your response:
 ```
 "#;
 
-const NEXT_STEP_BY_TOOLCALL: &'static str =
-    r#"
+const NEXT_STEP_BY_TOOLCALL: &'static str = r#"
 <|im_start|>system You are a function-calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Do not make assumptions about what values to plug into functions.
 
 Here are the available tools:
@@ -287,7 +344,7 @@ impl ImmutableAgent {
         system_prompt: &str,
         llm_config: Option<Value>,
         tools_map_meta: &str,
-        description: &str
+        description: &str,
     ) -> Self {
         ImmutableAgent {
             name: name.to_string(),
@@ -315,14 +372,16 @@ impl ImmutableAgent {
     }
 
     pub async fn get_user_feedback(&self) -> String {
-        use std::io:: { self, Write };
+        use std::io::{self, Write};
         print!("User input: ");
 
         io::stdout().flush().expect("Failed to flush stdout");
 
         let mut input = String::new();
 
-        io::stdin().read_line(&mut input).expect("Failed to read line");
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read line");
 
         if let Some('\n') = input.chars().next_back() {
             input.pop();
@@ -349,14 +408,13 @@ impl ImmutableAgent {
                 role: Role::User,
                 name: None,
                 content: Content::Text(input.to_owned()),
-            }
+            },
         ];
 
         let max_token = 1000u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(
-            messages.clone(),
-            max_token
-        ).await.expect("Failed to generate reply");
+        let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token)
+            .await
+            .expect("Failed to generate reply");
 
         match &output.content {
             Content::Text(_) => {
@@ -413,14 +471,13 @@ impl ImmutableAgent {
                 role: Role::User,
                 name: None,
                 content: Content::Text(input.to_owned()),
-            }
+            },
         ];
 
         let max_token = 1000u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(
-            messages.clone(),
-            max_token
-        ).await.expect("Failed to generate reply");
+        let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token)
+            .await
+            .expect("Failed to generate reply");
 
         match &output.content {
             Content::Text(_) => {
@@ -488,14 +545,13 @@ impl ImmutableAgent {
                 role: Role::User,
                 name: None,
                 content: Content::Text(input.to_owned()),
-            }
+            },
         ];
 
         let max_token = 500u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(
-            messages.clone(),
-            max_token
-        ).await.expect("Failed to generate reply");
+        let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token)
+            .await
+            .expect("Failed to generate reply");
 
         match &output.content {
             Content::Text(_out) => {
@@ -520,12 +576,10 @@ impl ImmutableAgent {
         loop {
             res = self.furter_task_by_toolcall(&initial_input).await.unwrap();
             initial_input = match task_vec.pop() {
-                Some(s) =>
-                    format!(
-                        "Here is the result from previous step: {}, here is the next task: {}",
-                        res,
-                        s
-                    ),
+                Some(s) => format!(
+                    "Here is the result from previous step: {}, here is the next task: {}",
+                    res, s
+                ),
                 None => {
                     break;
                 }
@@ -566,21 +620,18 @@ impl ImmutableAgent {
                 role: Role::User,
                 name: None,
                 content: Content::Text(user_prompt.clone()),
-            }
+            },
         ];
 
         let max_token = 1000u16;
-        let output: LlamaResponseMessage = chat_inner_async_llama(
-            messages.clone(),
-            max_token
-        ).await.expect("Failed to generate reply");
+        let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token)
+            .await
+            .expect("Failed to generate reply");
 
         match &output.content {
             Content::Text(_out) => {
-                let (terminate_or_not, next_step, key_points) = self.choose_next_step_and_(
-                    &_out,
-                    &user_prompt
-                ).await;
+                let (terminate_or_not, next_step, key_points) =
+                    self.choose_next_step_and_(&_out, &user_prompt).await;
 
                 println!(
                     "terminate?: {:?}, speaker: {:?}, points: {:?}\n",
@@ -600,7 +651,7 @@ impl ImmutableAgent {
     pub async fn choose_next_step_and_(
         &self,
         current_text_result: &str,
-        instruction: &str
+        instruction: &str,
     ) -> (bool, Option<String>, String) {
         let user_prompt = format!(
             "Given the task: {:?}, examine current result: {}, please decide whether the task is done or need further work",
@@ -618,17 +669,15 @@ impl ImmutableAgent {
                 role: Role::User,
                 name: None,
                 content: Content::Text(user_prompt),
-            }
+            },
         ];
 
-        let raw_reply = chat_inner_async_llama(messages, 100).await.expect(
-            "llm generation failure"
-        );
+        let raw_reply = chat_inner_async_llama(messages, 100)
+            .await
+            .expect("llm generation failure");
         println!("{:?}", raw_reply.content_to_string().clone());
-        let (stop_here, speaker, key_points) = parse_next_move_and_(
-            &raw_reply.content_to_string(),
-            Some("next_task_handler")
-        );
+        let (stop_here, speaker, key_points) =
+            parse_next_move_and_(&raw_reply.content_to_string(), Some("next_task_handler"));
 
         // let _ = save_message(conn, &self.name, &key_points, &speaker).await;
         (stop_here, speaker, key_points.join(","))
@@ -637,7 +686,7 @@ impl ImmutableAgent {
     pub async fn _is_termination(
         &self,
         current_text_result: &str,
-        instruction: &str
+        instruction: &str,
     ) -> (bool, String) {
         let user_prompt = format!(
             "Given the task: {:?}, examine current result: {}, please decide whether the task is done or not",
@@ -656,19 +705,20 @@ impl ImmutableAgent {
                 role: Role::User,
                 name: None,
                 content: Content::Text(user_prompt),
-            }
+            },
         ];
 
-        let raw_reply = chat_inner_async_llama(messages, 300).await.expect(
-            "llm generation failure"
+        let raw_reply = chat_inner_async_llama(messages, 300)
+            .await
+            .expect("llm generation failure");
+
+        println!(
+            "_is_termination raw_reply: {:?}",
+            raw_reply.content_to_string()
         );
 
-        println!("_is_termination raw_reply: {:?}", raw_reply.content_to_string());
-
-        let (terminate_or_not, _, key_points) = parse_next_move_and_(
-            &raw_reply.content_to_string(),
-            None
-        );
+        let (terminate_or_not, _, key_points) =
+            parse_next_move_and_(&raw_reply.content_to_string(), None);
 
         (terminate_or_not, key_points.join(","))
     }
@@ -687,11 +737,14 @@ impl ImmutableAgent {
                 role: Role::User,
                 name: None,
                 content: Content::Text(user_prompt.clone()),
-            }
+            },
         ];
         for n in 1..9 {
             println!("Iteration: {}", n);
-            match chat_inner_async_llama(messages.clone(), 1000u16).await?.content {
+            match chat_inner_async_llama(messages.clone(), 1000u16)
+                .await?
+                .content
+            {
                 Content::Text(_out) => {
                     // let head: String = _out.chars().take(200).collect::<String>();
                     println!("Raw generation {n}:\n {}\n\n", _out.clone());
@@ -700,10 +753,8 @@ impl ImmutableAgent {
                     println!("Run result {n}: {}\n", exec_result.clone());
 
                     if this_round_good {
-                        let (terminate_or_not, key_points) = self._is_termination(
-                            &exec_result,
-                            &user_prompt
-                        ).await;
+                        let (terminate_or_not, key_points) =
+                            self._is_termination(&exec_result, &user_prompt).await;
                         println!("Termination Check: {}\n", terminate_or_not);
                         if terminate_or_not {
                             println!("key_points: {:?}\n", key_points);
@@ -759,14 +810,13 @@ pub async fn compress_chat_history(message_history: &Vec<Message>) -> Vec<Messag
             role: Role::User,
             name: None,
             content: Content::Text(chat_history_text),
-        }
+        },
     ];
 
     let max_token = 1000u16;
-    let output: LlamaResponseMessage = chat_inner_async_llama(
-        messages.clone(),
-        max_token
-    ).await.expect("Failed to generate reply");
+    let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token)
+        .await
+        .expect("Failed to generate reply");
 
     match output.content {
         Content::Text(compressed) => {

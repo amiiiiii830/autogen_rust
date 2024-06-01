@@ -2,7 +2,7 @@ use regex::Regex;
 
 pub fn parse_next_move_and_(
     input: &str,
-    next_marker: Option<&str>
+    next_marker: Option<&str>,
 ) -> (bool, Option<String>, Vec<String>) {
     let json_regex = Regex::new(r"\{[^}]*\}").unwrap();
     let json_str = json_regex
@@ -10,9 +10,8 @@ pub fn parse_next_move_and_(
         .and_then(|cap| cap.get(0))
         .map_or(String::new(), |m| m.as_str().to_string());
 
-    let continue_or_terminate_regex = Regex::new(
-        r#""continue_or_terminate":\s*"([^"]*)""#
-    ).unwrap();
+    let continue_or_terminate_regex =
+        Regex::new(r#""continue_or_terminate":\s*"([^"]*)""#).unwrap();
     let continue_or_terminate = continue_or_terminate_regex
         .captures(&json_str)
         .and_then(|cap| cap.get(1))
@@ -25,7 +24,7 @@ pub fn parse_next_move_and_(
                 next_marker_regex
                     .captures(&json_str)
                     .and_then(|cap| cap.get(1))
-                    .map_or(String::new(), |m| m.as_str().to_string())
+                    .map_or(String::new(), |m| m.as_str().to_string()),
             )
         }
         None => None,
