@@ -11,7 +11,7 @@ pub async fn get_webpage_text(url: String) -> anyhow::Result<String> {
     Ok(res)
 }
 
-pub async fn search_bing(query: &str) -> anyhow::Result<String> {
+pub async fn search_with_bing(query: &str) -> anyhow::Result<String> {
     #[allow(unused)]
     #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]

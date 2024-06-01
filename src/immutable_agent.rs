@@ -4,8 +4,8 @@ use crate::utils::*;
 use crate::llm_llama_local::*;
 use crate::message_store::*;
 use crate::webscraper_hook::get_webpage_text;
-use crate::webscraper_hook::search_bing;
-use crate::{
+use crate::webscraper_hook::search_with_bing;
+use crate:: {
     PLANNING_SYSTEM_PROMPT,
     IS_TERMINATION_SYSTEM_PROMPT,
     CODE_PYTHON_SYSTEM_MESSAGE,
@@ -17,10 +17,11 @@ use crate::{
 use anyhow;
 use async_openai::types::Role;
 use rusqlite::Connection;
-use serde::{ Deserialize, Serialize };
-use serde_json::{ Value };
+use serde:: { Deserialize, Serialize };
+use serde_json:: { Value };
 
-const INTERNAL_ROUTING_PROMPT: &'static str = r#"
+const INTERNAL_ROUTING_PROMPT: &'static str =
+    r#"
 You are a helpful AI assistant acting as a task dispatcher. Below are several paths that an agent can take and their abilities. Examine the task instruction and the current result, then decide whether the task is complete or needs further work. If further work is needed, dispatch the task to one of the agents. Please also extract key points from the current result. The descriptions of the agents are as follows:
 
 1. **coding_python**: Specializes in generating clean, executable Python code for various tasks.
@@ -35,6 +36,204 @@ Use this format to reply:
 }
 ```
 Dispatch to user_proxy when all tasks are complete.
+"#;
+
+const NEXT_STEP_PLANNING: &'static str =
+    r#"
+    You are a helpful AI assistant with extensive capabilities. Your goal is to help complete tasks and create plausible answers grounded in real-world history of events and physics with minimal steps.
+
+    You have three built-in tools to solve problems:
+    
+    use_intrinsic_knowledge: You can answer many questions and provide a wealth of knowledge from within yourself. This should be your first approach to problem-solving.
+    code_with_python: Generates and executes Python code for various tasks based on user input. It can handle mathematical computations, data analysis, large datasets, complex operations through optimized algorithms, providing precise, deterministic outputs.
+    search_with_bing: Performs an internet search using Bing and returns relevant results based on a query. Use it to get information you don't have or cross-check for real-world grounding.
+    
+    When given a task, follow these steps:
+    
+    Determine whether the task can be completed in a single step with your built-in tools.
+    If yes, consider this as special cases for one-step completion which should be placed in the "steps_to_take" section.
+    If determined that it can be answered with intrinsic knowledge:
+    DO NOT try to answer it yourself.
+    Pass the task to the next agent by using the original input text verbatim as one single step in the "steps_to_take" section.
+    If neither intrinsic knowledge nor built-in tools suffice:
+    Strategize and outline necessary steps to achieve the final goal.
+    Each step corresponds to a task that can be completed with one of three approaches: intrinsic knowledge, creating Python code, or searching with Bing.
+    You don't need to do grounding check for well documented, established facts when there is no direct or inferred reference point of date or locality in task.
+    When listing steps:
+    Think about why you outlined such a step.
+    When cascading down to coding tasks:
+    Constrain them ideally into one coding task.
+    Fill out the "steps_to_take" section of your reply template accordingly.
+    
+    In your reply, list out your think-aloud steps clearly:
+    
+    Example 1:
+    
+    When tasked with "calculate prime numbers up to 100," reshape your answer as follows:
+    
+    {
+        "my_goal": "goal is to help complete this mathematical computation efficiently",
+        "my_thought_process": [
+            "Determine if this task can be done in single step: NO",
+            "Determine if this task can be done with coding: YES",
+            "Strategize on breaking down into logical subtasks: ",
+            "[Define function checking if number is prime]",
+            "[Loop through numbers 2-100 calling function]",
+            "[Print each number if it's prime]",
+            "...",
+            "[Check for unnecessary breakdowns especially for 'coding' tasks]: merge into single coding action"
+        ],
+        "steps_to_take": ["Define function checking primes; loop through 2-100 calling function; print primes"]
+    }
+    
+    Example 2:
+    
+    When tasked with "find out how old Barack Obama is" reshape your answer as follows:
+    
+    {
+        "my_goal": "goal is finding Barack Obama's current age quickly",
+        "my_thought_process": [
+            "Determine if this task can be done in single step: YES",
+            "Can be answered via intrinsic knowledge directly: YES",
+            "check real world grounding: my knowledge base is based on data grounded in 2022; need current year",
+            "use search_with_bing tool finding current year",
+            "collate age based on birth year (1961) and current year"
+        ],
+        "steps_to_take": ["Use 'search_with_bing' tool finding current year", 
+                          "Calculate Barack Obama's age from birth year (1961)"]
+    }
+
+    Example 3:
+    
+    When tasked with "find out when Steve Jobs died," reshape your answer as follows:
+    
+    {
+        "my_goal": "goal is finding Steve Jobs' date of death accurately",
+        "my_thought_process": [
+           "Determine if this task could utilize built-in tools: YES, can use intrinsic knowledge"
+         ],
+         "steps_to_take": ["find out when Steve Jobs died"]
+    }
+
+    Example 4 (Fact):
+
+When tasked with "how to describe Confucius" reshape your answer as follows:
+
+{
+    "my_goal": "goal is to provide an accurate description of Confucius",
+    "my_thought_process": [
+       "Determine if this task can be done in a single step: YES",
+       "Can it utilize intrinsic knowledge directly? YES"
+       "Confucius was a historical figure whose details are well-documented: no need to check grounding"
+       ]
+      ],
+      "steps_to_take": ["how to describe Confucius"]
+}
+
+Use this format for your response:
+```json
+{
+    "my_thought_process": [
+        "thought_process_one: my judgement at this step",
+        "...",
+        "though_process_N: : my judgement at this step"
+    ],
+    "steps_to_take": ["Step description", "..."] 
+}
+```
+"#;
+
+const NEXT_STEP_BY_TOOLCALL: &'static str =
+    r#"
+<|im_start|>system You are a function-calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Do not make assumptions about what values to plug into functions.
+
+Here are the available tools:
+
+<tools>
+1. **use_intrinsic_knowledge**: 
+Description: Solves tasks using capabilities and knowledge obtained at trainning time, the carveate is that it is frozen by the cut-off date and it's not aware of real world date of its operation.
+Example Call:
+<tool_call>
+{"arguments": {"task": "tell a joke"}, 
+"name": "use_intrinsic_knowledge"}
+</tool_call>
+
+2. **search_with_bing**: 
+Description: Conducts an internet search using Bing search engine and returns relevant results based on the query provided by the user. It's a safe choice to try searching for results; if they are not satisfactory, you can use suspect URLs from these search results with "get_webpage_text" function.
+
+Special Note 1: This function performs an internet search to find relevant webpages based on your query. It helps narrow down potential sources of information before extracting specific content.
+
+Special Note 2: Using search_with_bing as an initial step can make subsequent tasks more targeted by providing exact links that can then be scraped using get_webpage_text. This approach ensures higher relevance and accuracy of retrieved data.
+Example Call:
+<tool_call>
+{"arguments": {"query": "latest AI research trends"}, 
+"name": "search_with_bing"}
+</tool_call>
+
+3. **code_with_python**: 
+Description: Generates clean, executable Python code for various tasks based on user input.
+Example Call:
+<tool_call>
+{"arguments": {"key_points": "Create a Python script that reads a CSV file and plots a graph"}, 
+"name": "code_with_python"}
+</tool_call>
+
+4. **get_webpage_text**: 
+Description: Fetches all textual content from the specified webpage URL and returns it as plain text. It does not parse or structure the data in any specific format, so it may include extraneous information such as navigation menus, advertisements, and other non-essential text elements present on the page.
+
+Special Note 1: This function retrieves raw text from a given URL without filtering out irrelevant content. Therefore, using a URL that is not unique to your solution may result in obtaining unrelated data.
+
+Special Note 2: While this function can extract text from a known relevant webpage directly, it is often more effective to first use search_with_bing to find precise URLs before scraping them for targeted information.
+
+Example Call:
+<tool_call>
+{"arguments": {"url": "https://example.com"}, 
+"name": "get_webpage_text"}
+</tool_call>
+</tools>
+
+Function Definitions:
+
+use_intrinsic_knowledge
+Description: Solves tasks using built-in capabilities.
+Parameters:
+problem: The task you receive (type:string)
+Required Parameters:["task"]
+
+search_with_bing
+Description: Conducts an internet search using Bing search engine and returns relevant results based on the query provided by the user.
+Parameters:
+query: The search query to be executed on Bing (type:string)
+Required Parameters:["query"]
+
+code_with_python
+Description Generates clean executable Python code for various tasks.Parameters key_points Key points describing what kind of problem needs to be solved with Python code(type:string) Required Parameters:["key_points"]
+
+get_webpage_text
+Description Retrieves all textual content froma specified website URL.It does not parse or structure data in any specific format; hence,it may include extraneous information such as navigation menus advertisements,and other non-essential text elements present onthe page.Parameters url The URLofthe website from which to fetch textual content(type:string) Required Parameters:["url"]
+
+Remember that you area dispatcher;you DO NOT workon tasks yourself.
+
+Examples of tool calls for different scenarios:
+
+To handlea task like "tell a joke" with intrinsic knowledge: <tool_call>{"
+arguments": {"task": "tell ajoke"},
+"name": "use_intrinsic_knowledge"}</tool_call>
+To retrieve webpage text: <tool_call>{"
+arguments": {"url": "https://example.com"},
+"name": "get_webpage_text"}</tool_call>
+To generate Python code: <tool_call>{"arguments": {"key_points": "CreateaPython script that reads data from an API and stores it in adatabase"},
+"name": "code_with_python"}</tool_call>
+To perform an internet search: <tool_call>{"
+arguments": {"query": "best practices in software development"},
+"name": "search_with_bing"}</tool_call>
+
+For each function call, return a JSON object with function name and arguments within <tool_call></tools> XML tags as follows:
+
+<tools>  
+{"arguments": <args-dict>,   
+"name": "<function_name>"}
+</tools>
 "#;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -99,10 +298,10 @@ impl ImmutableAgent {
         }
     }
 
-    pub async fn send(&self, message_text: &str, conn: &Connection, next_step: &str) {
-        let _ = save_message(conn, &self.name, message_text, next_step).await;
+    pub async fn send(&self, message_text: &str, conn: &Connection, next_speaker: &str) {
+        let _ = save_message(conn, &self.name, message_text, next_speaker).await;
 
-        if next_step == "user_proxy" {
+        if next_speaker == "user_proxy" {
             let inp = self.get_user_feedback().await;
 
             if inp == "stop" {
@@ -116,8 +315,8 @@ impl ImmutableAgent {
     }
 
     pub async fn get_user_feedback(&self) -> String {
-        use std::io::{ self, Write };
-        print!("User input:");
+        use std::io:: { self, Write };
+        print!("User input: ");
 
         io::stdout().flush().expect("Failed to flush stdout");
 
@@ -176,21 +375,97 @@ impl ImmutableAgent {
 
                         get_webpage_text(url).await.ok()?
                     }
-                    "search_bing" => {
+                    "search_with_bing" => {
                         let query = args
                             .get("query")
                             .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument"))
                             .ok()?
                             .to_string();
-                        search_bing(&query).await.ok()?
+                        search_with_bing(&query).await.ok()?
                     }
-                    "start_coding" => {
+                    "code_with_python" => {
                         let key_points = args
                             .get("key_points")
                             .ok_or_else(|| anyhow::anyhow!("Missing 'key_points' argument"))
                             .ok()?
                             .to_string();
-                        let _ = self.start_coding(&key_points).await;
+                        let _ = self.code_with_python(&key_points).await;
+
+                        String::from("code is being generated")
+                    }
+                    _ => {
+                        return None;
+                    }
+                };
+                Some(res)
+            }
+        }
+    }
+
+    pub async fn next_step_by_toolcall(&self, input: &str) -> Option<String> {
+        let messages = vec![
+            Message {
+                role: Role::System,
+                name: None,
+                content: Content::Text(NEXT_STEP_BY_TOOLCALL.to_string()),
+            },
+            Message {
+                role: Role::User,
+                name: None,
+                content: Content::Text(input.to_owned()),
+            }
+        ];
+
+        let max_token = 1000u16;
+        let output: LlamaResponseMessage = chat_inner_async_llama(
+            messages.clone(),
+            max_token
+        ).await.expect("Failed to generate reply");
+
+        match &output.content {
+            Content::Text(_) => {
+                todo!();
+            }
+            Content::ToolCall(call) => {
+                let args = call.clone().arguments.unwrap_or_default();
+
+                let res = match call.name.as_str() {
+                    "use_intrinsic_knowledge" => {
+                        let task = args
+                            .get("task")
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'task' argument"))
+                            .ok()?
+                            .to_string();
+
+                        let steps_vec = self.planning(&task).await;
+
+                        self.stepper(&steps_vec).await;
+                        std::process::exit(0);
+                    }
+                    "get_webpage_text" => {
+                        let url = args
+                            .get("url")
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'url' argument"))
+                            .ok()?
+                            .to_string();
+
+                        get_webpage_text(url).await.ok()?
+                    }
+                    "search_with_bing" => {
+                        let query = args
+                            .get("query")
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'query' argument"))
+                            .ok()?
+                            .to_string();
+                        search_with_bing(&query).await.ok()?
+                    }
+                    "code_with_python" => {
+                        let key_points = args
+                            .get("key_points")
+                            .ok_or_else(|| anyhow::anyhow!("Missing 'key_points' argument"))
+                            .ok()?
+                            .to_string();
+                        let _ = self.code_with_python(&key_points).await;
 
                         String::from("code is being generated")
                     }
@@ -207,7 +482,7 @@ impl ImmutableAgent {
             Message {
                 role: Role::System,
                 name: None,
-                content: Content::Text(PLANNING_SYSTEM_PROMPT.to_string()),
+                content: Content::Text(NEXT_STEP_PLANNING.to_string()),
             },
             Message {
                 role: Role::User,
@@ -225,17 +500,50 @@ impl ImmutableAgent {
         match &output.content {
             Content::Text(_out) => {
                 println!("{:?}\n\n", _out.clone());
-                parse_planning_steps(_out)
+                let mut res = parse_planning_steps(_out);
+                res.reverse();
+                res
             }
             _ => unreachable!(),
         }
+    }
+
+    pub async fn stepper(&self, task_vec: &Vec<String>) -> anyhow::Result<String> {
+        let mut task_vec = task_vec.clone();
+        let mut initial_input = match task_vec.pop() {
+            Some(s) => s,
+            None => {
+                return Err(anyhow::Error::msg("no task to handle"));
+            }
+        };
+        let mut res = String::new();
+        loop {
+            res = self.furter_task_by_toolcall(&initial_input).await.unwrap();
+            initial_input = match task_vec.pop() {
+                Some(s) =>
+                    format!(
+                        "Here is the result from previous step: {}, here is the next task: {}",
+                        res,
+                        s
+                    ),
+                None => {
+                    break;
+                }
+            };
+        }
+        Ok(res)
     }
 
     pub async fn run(&self, conn: &Connection, stop_toggle: bool) -> anyhow::Result<()> {
         match self.receive_message(conn).await {
             Some(message_text) => {
                 println!("{} received: {}", self.name, message_text);
-                let stop = self.a_generate_reply(&message_text).await?;
+                let steps_vec = self.planning(&message_text).await;
+
+                let res = self.stepper(&steps_vec).await;
+                println!("{:?}", res);
+                let stop = self.get_user_feedback().await == "stop";
+
                 if stop_toggle && stop {
                     std::process::exit(0);
                 }
@@ -365,7 +673,7 @@ impl ImmutableAgent {
         (terminate_or_not, key_points.join(","))
     }
 
-    pub async fn start_coding(&self, message_text: &str) -> anyhow::Result<()> {
+    pub async fn code_with_python(&self, message_text: &str) -> anyhow::Result<()> {
         let formatter = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
         let user_prompt = formatter(&[message_text]);
 
@@ -398,7 +706,7 @@ impl ImmutableAgent {
                         ).await;
                         println!("Termination Check: {}\n", terminate_or_not);
                         if terminate_or_not {
-                            println!("key_points:{:?}\n", key_points);
+                            println!("key_points: {:?}\n", key_points);
 
                             self.get_user_feedback().await;
                         }

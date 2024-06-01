@@ -83,15 +83,14 @@ async fn main() -> Result<()> {
     //     Role::User
     // );
 
-    // let code = coding_agent.start_coding(&message, &conn).await?;
+    // let code = coding_agent.code_with_python(&message, &conn).await?;
 
     //    let  res  = user_proxy.planning("go get today's weather forecast").await;
 
     // for _ in 1..9 {
 
+    let res = user_proxy.send("what's the Canadian dollar vs USD exchange rate", &conn, "user_proxy").await;
     let _ = user_proxy.run(&conn, true).await;
-    let res = user_proxy.get_user_feedback().await;
-  let _=  user_proxy.send(&res, &conn, "user_proxy").await;
     // coding_agent.run(&conn, false).await;
     // user_proxy.run(&conn, true).await;
 
