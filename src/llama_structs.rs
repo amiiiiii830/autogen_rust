@@ -1,9 +1,6 @@
-use crate::FUNCTON_CALL_SYSTEM_PROMPT;
-use async_openai::types::{CompletionUsage, CreateChatCompletionResponse, Role};
-use serde::{Deserialize, Serialize};
+use async_openai::types::{ CompletionUsage, CreateChatCompletionResponse, Role };
+use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
-
-use crate::llm_llama_local::chat_inner_async;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ToolCall {
@@ -28,18 +25,18 @@ impl LlamaResponseMessage {
     pub fn content_to_string(&self) -> String {
         match &self.content {
             Content::Text(text) => text.clone(),
-            Content::ToolCall(tool_call) => format!(
-                "tool_call: {}, arguments: {}",
-                tool_call.name,
-                tool_call
-                    .arguments
-                    .as_ref()
-                    .unwrap()
-                    .into_iter()
-                    .map(|(arg, val)| format!("{:?}: {:?}", arg, val))
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
+            Content::ToolCall(tool_call) =>
+                format!(
+                    "tool_call: {}, arguments: {}",
+                    tool_call.name,
+                    tool_call.arguments
+                        .as_ref()
+                        .unwrap()
+                        .into_iter()
+                        .map(|(arg, val)| format!("{:?}: {:?}", arg, val))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                ),
         }
     }
 }
@@ -58,7 +55,7 @@ fn extract_json_from_xml_like(xml_like_data: &str) -> Option<String> {
 }
 
 pub fn output_llama_response(
-    res_obj: CreateChatCompletionResponse,
+    res_obj: CreateChatCompletionResponse
 ) -> Option<LlamaResponseMessage> {
     let usage = res_obj.clone().usage.unwrap();
     let msg_obj = res_obj.clone().choices[0].message.clone();
@@ -81,49 +78,4 @@ pub fn output_llama_response(
         }
     }
     None
-}
-
-pub async fn fire_tool_call(
-    // system_prompt: &str,
-    // tool_call_obj: &str,
-    user_prompt: &str,
-) -> anyhow::Result<LlamaResponseMessage> {
-    let system_prompt = &FUNCTON_CALL_SYSTEM_PROMPT;
-
-    // let content = match function.name.as_str() {
-    //     "getWeather" => {
-    //         let argument_obj =
-    //             serde_json::from_str::<HashMap<String, String>>(&function.arguments)?;
-
-    //         get_weather(&argument_obj["city"].to_string())
-    //     }
-    //     "scraper" => {
-    //         let argument_obj =
-    //             serde_json::from_str::<HashMap<String, String>>(&function.arguments)?;
-
-    //         scraper(argument_obj["url"].clone()).await
-    //     }
-    //     "getTimeOfDay" => get_time_of_day(),
-    //     _ => "".to_string(),
-    // };
-    let _res = chat_inner_async(&system_prompt, &user_prompt, 500).await?;
-
-    // if let Some(parsed) = output_llama_response(res) {
-    //     match parsed.content {
-    //         Content::ToolCall(ref tool_call) => {
-    //             let func_name = tool_call.name.clone();
-    //             let arguments = tool_call.arguments.clone().unwrap();
-    //             let url = &arguments["url"];
-    //             if func_name == "get_webpage_text" {
-    //                 let res = get_webpage_text(&url).await?;
-    //                 println!("{:?}", res);
-    //             }
-    //         }
-
-    //         _ => (),
-    //     }
-
-    //     return Ok(parsed);
-    // }
-    Err(anyhow::Error::msg("parsing error"))
 }

@@ -498,8 +498,8 @@ impl ImmutableAgent {
         Ok(res)
     }
 
-    pub async fn simple_reply(&self, content_text: &str) -> anyhow::Result<bool> {
-        let user_prompt = format!("Here is the task for you: {:?}", content_text);
+    pub async fn simple_reply(&self, input: &str) -> anyhow::Result<bool> {
+        let user_prompt = format!("Here is the task for you: {:?}", input);
 
         let messages = vec![
             Message {
