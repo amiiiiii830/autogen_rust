@@ -105,7 +105,7 @@ When listing steps:
 
 Think about why you outlined such a step.
 When cascading down to coding tasks:
-Constrain them ideally into one coding task.
+Constrain them ideally into one coding task. Add "Work out the following task/tasks as one coding problem: " before your reply in the "key_points" section.  
 Fill out the "steps_to_take" section of your reply template accordingly.
 
 In your reply list out your think-aloud steps clearly:
@@ -128,7 +128,7 @@ Here's how you would structure your response:
         "...",
         "[Check for unnecessary breakdowns especially for 'coding' tasks]: merge into single coding action"
     ],
-    "steps_to_take": ["Define function checking primes; loop through 2-100 calling function; print primes"]
+    "steps_to_take": ["Work out the following task/tasks as one coding problem: Define function checking primes; loop through 2-100 calling function; print primes"]
 }
 
 Example 2:
@@ -260,15 +260,15 @@ Required Parameters: ["query"]
 
 code_with_python
 Description: Generates clean executable Python code for various tasks based on key points describing what needs to be solved with code.
-Parameters: "key_points" Key points describing what kind of problem needs to be solved with Python code(type:string)
+Parameters: "key_points" Key points describing what kind of problem needs to be solved with Python code (type:string)
 Required Parameters: ["key_points"]
 
 get_webpage_text
 Description: Retrieves all textual content froma specified website URL.It does not parse or structure data in any specific format; hence, it may include extraneous information such as navigation menus advertisements, and other non-essential text elements present onthe page.
-Parameters: "url" The URL of the website from which to fetch textual content 
+Parameters: "url" The URL of the website from which to fetch textual content (type:string)
 Required Parameters: ["url"]
 
-Remember that you are a dispatcher; you DO NOT work on tasks yourself.
+Remember that you are a dispatcher; you DO NOT work on tasks yourself, especially when you see specific coding suggestions, don't write any code, just dispatch.
 
 For each function call, return a JSON object with function name and arguments within <tool_call></tool_call> XML tags as follows:
 
@@ -357,6 +357,9 @@ impl ImmutableAgent {
             input.pop();
         }
 
+        if input == "stop" {
+            std::process::exit(0);
+        }
         return input;
     }
 
@@ -379,62 +382,48 @@ impl ImmutableAgent {
             messages.clone(),
             max_token
         ).await.expect("Failed to generate reply");
-        let mut res = String::new();
         match &output.content {
-            Content::Text(_) => {
-                todo!();
+            Content::Text(unexpected_result) => {
+                return Ok(
+                    format!("attempt to run tool_call failed, returning text result: {} ", unexpected_result)
+                );
             }
             Content::ToolCall(call) => {
                 let args = call.clone().arguments.unwrap_or_default();
-
-                match call.name.as_str() {
-                    "use_intrinsic_knowledge" => {
-                        res = match args.get("task") {
+                let res = match call.name.as_str() {
+                    "use_intrinsic_knowledge" =>
+                        match args.get("task") {
                             Some(t) => self.planning(&t).await.join(", "),
                             None => String::from("failed in use_intrinsic_knowledge"),
-                        };
-
-                        std::process::exit(0);
-                    }
-                    // "do_grounding_check" => {
-                    //     res = match args.get("task") {
-                    //         Some(d) => self.planning(&d).await.join(", "),
-                    //         None => String::from("failed in use_intrinsic_knowledge"),
-                    //     };
-
-                    //     std::process::exit(0);
-                    // }
-                    "get_webpage_text" => {
-                        res = match args.get("url") {
+                        }
+                    "get_webpage_text" =>
+                        match args.get("url") {
                             Some(u) =>
                                 get_webpage_text(u.to_string()).await.unwrap_or(
                                     "get_webpage_text failed".to_string()
                                 ),
                             None => String::from("failed in get_webpage_text"),
-                        };
-                    }
-                    "search_with_bing" => {
-                        res = match args.get("query") {
+                        }
+                    "search_with_bing" =>
+                        match args.get("query") {
                             Some(q) =>
                                 search_with_bing(&q).await.unwrap_or(
                                     "search_with_bing failed".to_string()
                                 ),
                             None => String::from("failed in search_with_bing"),
-                        };
-                    }
-                    "code_with_python" => {
-                        res = match args.get("key_points") {
+                        }
+                    "code_with_python" =>
+                        match args.get("key_points") {
                             Some(k) => {
                                 let _ = self.code_with_python(&k).await;
                                 "code_with_python working".to_string()
                             }
                             None => String::from("failed in code_with_python"),
-                        };
-                    }
+                        }
                     _ => {
                         panic!();
                     }
-                }
+                };
                 Ok(res)
             }
         }
@@ -461,8 +450,9 @@ impl ImmutableAgent {
 
         match &output.content {
             Content::Text(_out) => {
-                println!("{:?}\n\n", _out.clone());
-                let mut res = parse_planning_steps(_out);
+                let res = parse_planning_steps(_out);
+                println!("steps_to_take: {:?}\n", res);
+                let mut res = res;
                 res.reverse();
                 res
             }
@@ -478,7 +468,7 @@ impl ImmutableAgent {
                 return Err(anyhow::Error::msg("no task to handle"));
             }
         };
-        let mut res = String::new();
+        let mut res;
         loop {
             res = self
                 .next_step_by_toolcall(&initial_input).await

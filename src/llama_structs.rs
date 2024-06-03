@@ -1,6 +1,7 @@
 use async_openai::types::{ CompletionUsage, CreateChatCompletionResponse, Role };
 use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
+use serde_json::Value;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ToolCall {
@@ -63,12 +64,22 @@ pub fn output_llama_response(
     if let Some(data) = msg_obj.content {
         if let Some(json_str) = extract_json_from_xml_like(&data) {
             println!("{:?}", json_str.clone());
-            let tool_call: ToolCall = serde_json::from_str(&json_str).unwrap();
-            return Some(LlamaResponseMessage {
-                content: Content::ToolCall(tool_call),
-                role: role,
-                usage: usage,
-            });
+            match extract_tool_call(&json_str) {
+                Some(tc) => {
+                    return Some(LlamaResponseMessage {
+                        content: Content::ToolCall(tc),
+                        role: role,
+                        usage: usage,
+                    });
+                }
+                None => {
+                    return Some(LlamaResponseMessage {
+                        content: Content::Text(data.to_owned()),
+                        role: role,
+                        usage: usage,
+                    });
+                }
+            }
         } else {
             return Some(LlamaResponseMessage {
                 content: Content::Text(data.to_owned()),
@@ -77,5 +88,32 @@ pub fn output_llama_response(
             });
         }
     }
+    None
+}
+
+
+
+fn extract_tool_call(input: &str) -> Option<ToolCall> {
+    let re = regex::Regex::new(r#"\{"arguments":\s*(?P<arguments>\{.*?\}),\s*"name":\s*"(?P<name>.*?)"\}"#).unwrap();
+
+    if let Some(caps) = re.captures(input) {
+        let arguments_str = caps.name("arguments")?.as_str();
+        let name = caps.name("name")?.as_str().to_string();
+
+        if let Ok(arguments_value) = serde_json::from_str::<Value>(arguments_str) {
+            let arguments_map = match arguments_value {
+                Value::Object(map) => map.into_iter()
+                    .filter_map(|(k, v)| v.as_str().map(|v| (k, v.to_string())))
+                    .collect(),
+                _ => HashMap::new(),
+            };
+
+            return Some(ToolCall { 
+                arguments: Some(arguments_map), 
+                name 
+            });
+        }
+    }
+
     None
 }

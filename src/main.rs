@@ -8,7 +8,7 @@ async fn main() -> Result<()> {
 
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
 
-    let task_vec = user_proxy.planning("find when John Lennon was assasinnated").await;
+    let task_vec = user_proxy.planning("make a program that can print Sine wave in terminal").await;
 
     let res = user_proxy.stepper(&task_vec).await;
     println!("{:?}", res);
