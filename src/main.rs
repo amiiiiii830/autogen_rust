@@ -1,12 +1,12 @@
 use anyhow::Result;
 use autogen_rust::immutable_agent::*;
-use rusqlite::Connection;
 use tokio;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    let system_prompt = r#"<|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools> {"type": "function", "function": {"name": "get_current_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"}, "format": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "The temperature unit to use. Infer this from the users location."}}, "required": ["location", "format"]}}} </tools> Use the following pydantic model json schema for each tool call you will make: {"properties": {"arguments": {"title": "Arguments", "type": "object"}, "name": {"title": "Name", "type": "string"}}, "required": ["arguments", "name"], "title": "FunctionCall", "type": "object"} For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+    let system_prompt =
+        r#"<|im_start|>system You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. Here are the available tools: <tools> {"type": "function", "function": {"name": "get_current_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"}, "format": {"type": "string", "enum": ["celsius", "fahrenheit"], "description": "The temperature unit to use. Infer this from the users location."}}, "required": ["location", "format"]}}} </tools> Use the following pydantic model json schema for each tool call you will make: {"properties": {"arguments": {"title": "Arguments", "type": "object"}, "name": {"title": "Name", "type": "string"}}, "required": ["arguments", "name"], "title": "FunctionCall", "type": "object"} For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
     <tool_call>
     {"arguments": <args-dict>, "name": <function-name>}
     </tool_call>"#;
@@ -39,27 +39,12 @@ async fn main() -> Result<()> {
 
     // let code = extract_code(raw);
 
-    // println!("{:?}", code);
-    // let conn = Connection::open_in_memory()?;
-    let conn = Connection::open("src/database.db")?;
-
-    // conn.execute(
-    //     "CREATE TABLE IF NOT EXISTS GroupChat (
-    //         id INTEGER PRIMARY KEY,
-    //         agent_name TEXT NOT NULL,
-    //         message_content TEXT NOT NULL,
-    //         tokens_count INTEGER NOT NULL,
-    //         next_speaker TEXT
-    //     )",
-    //     []
-    // )?;
-    //   let _ =  conn.execute("DELETE FROM GroupChat", [])?;
-
-    use tokio::{select, signal};
-
-    let agent = ImmutableAgent::simple("placeholder", "");
-    let coding_agent = ImmutableAgent::simple("coding_agent", "");
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
+
+    let task_vec = user_proxy.planning("find when John Lennon was assasinnated").await;
+
+    let res = user_proxy.stepper(&task_vec).await;
+    println!("{:?}", res);
 
     // loop {
     //     select! {

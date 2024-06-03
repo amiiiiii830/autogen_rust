@@ -504,7 +504,7 @@ For each function call return a json object with function name and arguments wit
     }
 } */
 
-const _DRAFT_TOOLCALL_PROMPT: &'static str =         r#"
+const _DRAFT_TOOLCALL_PROMPT: &'static str = r#"
 I'm creating a large language model prompt that use these strategies:
 1. Goal directed planning
 2. Chain of thoughts/think step by step
