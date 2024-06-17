@@ -63,9 +63,10 @@ pub fn output_llama_response(
     let role = msg_obj.clone().role;
     if let Some(data) = msg_obj.content {
         if let Some(json_str) = extract_json_from_xml_like(&data) {
-            println!("{:?}", json_str.clone());
             match extract_tool_call(&json_str) {
                 Some(tc) => {
+                    println!("tool_call: {:?}", tc.clone());
+
                     return Some(LlamaResponseMessage {
                         content: Content::ToolCall(tc),
                         role: role,

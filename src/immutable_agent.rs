@@ -4,78 +4,13 @@ use crate::llm_utils_together::*;
 use crate::task_ledger::*;
 use crate::utils::*;
 use crate::webscraper_hook::{get_webpage_text, search_with_bing};
-use crate::{
-    CODE_PYTHON_SYSTEM_MESSAGE, IS_TERMINATION_SYSTEM_PROMPT, ITERATE_CODING_FAIL_TEMPLATE,
-    ITERATE_CODING_INCORRECT_TEMPLATE, ITERATE_CODING_START_TEMPLATE, ITERATE_NEXT_STEP_TEMPLATE,
-};
+use crate::{IS_TERMINATION_SYSTEM_PROMPT, ITERATE_NEXT_STEP_TEMPLATE};
 use anyhow;
 use async_openai::types::Role;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-pub static GROUNDING_CHECK_TEMPLATE: Lazy<String> = Lazy::new(|| {
-    let today = Utc::now().format("%Y-%m-%dT").to_string();
-    format!(
-        r#"
-<|im_start|>system You are an AI assistant. Your task is to determine whether a question requires grounding in real-world date, time, location, or physics.
-
-When given a task, please follow these steps to think it through and then act:
-
-Identify Temporal Relevance: Determine if the question requires current or time-sensitive information. Note that today's date is {}.
-Check for Location Specificity: Identify if the question is location-specific.
-Determine Real-time Data Dependency: Assess if the answer depends on real-time data or specific locations.
-Suggest Grounding Information: If grounding is needed, suggest using today's date to cross-validate the reply. Otherwise, suggest reliable sources to obtain the necessary grounding data.
-
-Remember that you are a dispatcher; you DO NOT work on tasks yourself. Your role is to direct the process.
-
-In your reply, list out your think-aloud steps clearly:
-
-Example 1:
-
-When tasked with "What is the weather like in New York?" reshape your answer as follows:
-
-{{
-    \"my_thought_process\": [
-        \"my_goal: goal is to identify whether grounding is needed for this task\",
-        \"Determine if the question requires current or time-sensitive information: YES\",
-        \"Provide assistance to agent for this task grounding information: today's date is xxxx-xx-xx\",
-        \"Echo original input verbatim in key_points section\"
-    ],
-    \"key_points\": [\"today's date is xxxx-xx-xx, What is the weather like in New York\"]
-}}
-
-Example 2:
-
-When tasked with \"Who killed John Lennon?\" reshape your answer as follows:
-
-{{
-    \"my_thought_process\": [
-        \"my_goal: goal is to identify whether grounding is needed for this task\",
-        \"Determine if the question requires current or time-sensitive information: NO\",
-        \"Echo original input verbatim in key_points section\"
-    ],
-    \"key_points\": [\"Who killed John Lennon?\"]
-}}
-
-Use this format for your response:
-
-```json
-{{
-    \"my_thought_process\": [
-        \"my_goal: goal is to identify whether grounding is needed for this task\",
-        \"thought_process_one: my judgement at this step\",
-        \"...\",
-        \"thought_process_N: my judgement at this step\"
-    ],
-    \"grounded_or_not\": \"YES\" or \"NO\",
-    \"key_points\": [\"point1\", \"point2\", ...]
-}}
-"#,
-        today
-    )
-});
 
 const NEXT_STEP_PLANNING: &'static str = r#"
 <|im_start|>system You are a helpful AI assistant. Your task is to decompose complex tasks into clear, manageable sub-tasks and provide high-level guidance.
@@ -102,21 +37,6 @@ Think aloud and write down your thoughts in the following template:
 }
 "#;
 
-/* 2. **do_grounding_check**:
-Description: Provides current date or suggests ways to get grounding information in real-world locality, history of events or physics.
-Current Date: 2024-06-02
-Example Call:
-<tool_call>
-{"arguments": {"task": "It's now 2024-06-02, find out how old would Steve Jobs be if he didn't die"},
-"name": "do_grounding_check"}
-</tool_call>
-
-
-do_grounding_check
-Description: Provides current date or suggests ways to get grounding information in real-world locality or physics (current date is 2024-06-02).
-Parameters: "task" The task you receive (type:string)
-Required Parameters: ["task"] */
-
 const NEXT_STEP_BY_TOOLCALL: &'static str = r#"
 <|im_start|>system You are a function-calling AI model. You are provided with function signatures within <tools></tools> XML tags. You will call one function and ONLY ONE to assist with the user query. Do not make assumptions about what values to plug into functions.
 
@@ -140,14 +60,6 @@ Example Call:
 "name": "search_with_bing"}
 </tool_call>
 
-3. **code_with_python**: 
-Description: Generates clean, executable Python code for various tasks based on user input.
-Special Note: When task requires precise mathematical operations; processing, analyzing and creating complex data types, where AI models can not efficiently represent and manipulate in natural language terms, this is the way out.
-Example Call:
-<tool_call>
-{"arguments": {"key_points": "Create a Python script that reads a CSV file and plots a graph"}, 
-"name": "code_with_python"}
-</tool_call>
 </tools>
 
 Function Definitions
@@ -162,11 +74,6 @@ Description: Conducts an internet search using Bing search engine and returns re
 Parameters: "query" The search query to be executed on Bing (type:string)
 Required Parameters: ["query"]
 
-code_with_python
-Description: Generates clean executable Python code for various tasks based on key points describing what needs to be solved with code.
-Parameters: "key_points" Key points describing what kind of problem needs to be solved with Python code (type:string)
-Required Parameters: ["key_points"]
-
 Remember that you are a dispatcher; you DO NOT work on tasks yourself, especially when you see specific coding suggestions, don't write any code, just dispatch.
 
 For each function call, return a JSON object with function name and arguments within <tool_call></tool_call> XML tags as follows:
@@ -178,8 +85,10 @@ For each function call, return a JSON object with function name and arguments wi
 "#;
 
 const ITERATE_NEXT_STEP: &'static str = r#"
-<|im_start|>system You are a task solving expert. You follow steps to solve complex problems. For much of the time, you're working iteratively on the sub_tasks, you are given the result from a previous step, you execute on the instruction you receive for your current step.
+<|im_start|>system You are a task solving expert.
 "#;
+// <|im_start|>system You are a task solving expert. You follow steps to solve complex problems. For much of the time, you're working iteratively on the sub_tasks, you are given the result from a previous step, you execute on the instruction you receive for your current step.
+// "#;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -268,59 +177,159 @@ impl ImmutableAgent {
         return input;
     }
 
-    pub async fn next_step_by_toolcall(&self, input: &str) -> anyhow::Result<String> {
-        let max_token = 1000u16;
-        let output: LlamaResponseMessage =
-            chat_inner_async_llama(NEXT_STEP_BY_TOOLCALL, input, max_token)
-                .await
-                .expect("Failed to generate reply");
-        match &output.content {
-            Content::Text(unexpected_result) => {
-                return Ok(format!(
-                    "attempt to run tool_call failed, returning text result: {} ",
-                    unexpected_result
-                ));
-            }
-            Content::ToolCall(call) => {
-                let args = call.clone().arguments.unwrap_or_default();
-                let res = match call.name.as_str() {
-                    "use_intrinsic_knowledge" => match args.get("task") {
-                        Some(t) => format!("task: {:?}", t.clone()),
-                        None => String::from("failed in use_intrinsic_knowledge"),
-                    },
-                    "search_with_bing" => match args.get("query") {
-                        Some(q) => search_with_bing(&q)
-                            .await
-                            .unwrap_or("search_with_bing failed".to_string()),
-                        None => String::from("failed in search_with_bing"),
-                    },
-                    "code_with_python" => match args.get("key_points") {
-                        Some(k) => {
-                            let _ = self.code_with_python(&k).await;
-                            "code_with_python working".to_string()
-                        }
-                        None => String::from("failed in code_with_python"),
-                    },
-                    _ => {
-                        panic!();
-                    }
-                };
-                Ok(res)
-            }
+    pub async fn next_step_by_toolcall_nested(
+        &self,
+        carry_over: Option<String>,
+        input: &str,
+    ) -> anyhow::Result<String> {
+        match self.next_step_out_toolcall(input).await {
+            Ok(tc) => self.exec_toolcall(carry_over, &tc).await,
+            Err(_) => Err(anyhow::Error::msg("nested toolcall failed")),
         }
     }
-    pub async fn iterate_next_step(
+    pub async fn next_step_by_toolcall(
         &self,
-        prev_solution: &str,
+        carry_over: Option<String>,
         input: &str,
     ) -> anyhow::Result<String> {
         let max_token = 1000u16;
 
         let formatter = ITERATE_NEXT_STEP_TEMPLATE.lock().unwrap();
 
-        let user_prompt = formatter(&[prev_solution, input]);
         let output: LlamaResponseMessage =
-            chat_inner_async_llama(ITERATE_NEXT_STEP, &user_prompt, max_token)
+            chat_inner_async_llama(NEXT_STEP_BY_TOOLCALL, &input, max_token)
+                .await
+                .expect("Failed to generate reply");
+        match &output.content {
+            Content::Text(unexpected_result) => Ok(format!(
+                "attempt to run tool_call failed, returning text result: {} ",
+                unexpected_result
+            )),
+            Content::ToolCall(call) => {
+                let args = call.clone().arguments.unwrap_or_default();
+                let res = match call.name.as_str() {
+                    "use_intrinsic_knowledge" => match args.get("task") {
+                        Some(t) => {
+                            println!("entered intrinsic arm: {:?}", t.clone());
+                            //why program doesn't continue to execute the next async func?
+                            match self.iterate_next_step(carry_over, t).await {
+                                Ok(res) => {
+                                    println!("intrinsic result: {:?}", res.clone());
+                                    res
+                                }
+
+                                Err(_) => String::from("failed in use_intrinsic_knowledge"),
+                            }
+                        }
+                        None => String::from("failed in use_intrinsic_knowledge"),
+                    },
+                    "search_with_bing" => match args.get("query") {
+                        Some(q) => {
+                            println!("entered bing arm: {:?}", q.clone());
+
+                            match search_with_bing(&q).await {
+                                Ok(ve) => {
+                                    println!("bing result: {:?}", ve.clone());
+
+                                    let url = &ve[0].0;
+                                    let res = get_webpage_text(url.to_string()).await?;
+                                    res.chars().take(6_000).collect::<String>()
+                                }
+                                Err(_) => String::from("search failed to get useful data"),
+                            }
+                        }
+                        None => String::from("failed in search_with_bing"),
+                    },
+                    _ => String::from("tool_call didn't create useful result"),
+                };
+                Ok(res)
+            }
+        }
+    }
+
+    pub async fn exec_toolcall(
+        &self,
+        carry_over: Option<String>,
+        call: &ToolCall,
+    ) -> anyhow::Result<String> {
+        let args = call.clone().arguments.unwrap_or_default();
+        let res = match call.name.as_str() {
+            "use_intrinsic_knowledge" => match args.get("task") {
+                Some(t) => {
+                    println!("entered intrinsic arm: {:?}", t.clone());
+                    //why program doesn't continue to execute the next async func?
+                    match self.iterate_next_step(carry_over, t).await {
+                        Ok(res) => {
+                            println!("intrinsic result: {:?}", res.clone());
+                            res
+                        }
+
+                        Err(_) => String::from("failed in use_intrinsic_knowledge"),
+                    }
+                }
+                None => String::from("failed in use_intrinsic_knowledge"),
+            },
+            "search_with_bing" => match args.get("query") {
+                Some(q) => {
+                    println!("entered bing arm: {:?}", q.clone());
+
+                    match search_with_bing(&q).await {
+                        Ok(ve) => {
+                            println!("bing result: {:?}", ve.clone());
+
+                            let url = &ve[0].0;
+                            let res = get_webpage_text(url.to_string()).await?;
+                            res.chars().take(6_000).collect::<String>()
+                        }
+                        Err(_) => String::from("search failed to get useful data"),
+                    }
+                }
+                None => String::from("failed in search_with_bing"),
+            },
+            _ => String::from("tool_call didn't create useful result"),
+        };
+        Ok(res)
+    }
+    pub async fn next_step_out_toolcall(&self, input: &str) -> anyhow::Result<ToolCall> {
+        let max_token = 1000u16;
+
+        let output: LlamaResponseMessage =
+            chat_inner_async_llama(NEXT_STEP_BY_TOOLCALL, &input, max_token)
+                .await
+                .expect("Failed to generate reply");
+        match &output.content {
+            Content::Text(unexpected_result) => Err(anyhow::Error::msg(format!(
+                "attempt to run tool_call failed, returning text result: {} ",
+                unexpected_result
+            ))),
+            Content::ToolCall(call) => Ok(call.clone()),
+        }
+    }
+    pub async fn iterate_next_step(
+        &self,
+        carry_over: Option<String>,
+        input: &str,
+    ) -> anyhow::Result<String> {
+        let max_token = 1000u16;
+
+        let formatter = ITERATE_NEXT_STEP_TEMPLATE.lock().unwrap();
+        let user_prompt = match &carry_over {
+            Some(c) => formatter(&[&c, input]),
+            None => input.to_string(),
+        };
+
+        let system_prompt = match &carry_over {
+            Some(_) => ITERATE_NEXT_STEP,
+            None => "<|im_start|>system You are a task solving expert.",
+        };
+
+        println!(
+            "system_prompt: {:?}\n \n user_prompt: {:?}\n\n",
+            system_prompt.clone(),
+            user_prompt.clone()
+        );
+        let output: LlamaResponseMessage =
+            chat_inner_async_llama(&system_prompt, &user_prompt, max_token)
                 .await
                 .expect("Failed to generate reply");
         match &output.content {
@@ -354,34 +363,7 @@ impl ImmutableAgent {
         }
     }
 
-    pub async fn stepper(&self, task_vec: &Vec<String>) -> anyhow::Result<String> {
-        let mut task_vec = task_vec.clone();
-        let mut initial_input = match task_vec.pop() {
-            Some(s) => s,
-            None => {
-                return Err(anyhow::Error::msg("no task to handle"));
-            }
-        };
-        let mut res;
-        loop {
-            res = self
-                .next_step_by_toolcall(&initial_input)
-                .await
-                .unwrap_or("next_step_by_toolcall failed".to_string());
-            initial_input = match task_vec.pop() {
-                Some(s) => format!(
-                    "Here is the result from previous step: {}, here is the next task: {}",
-                    res, s
-                ),
-                None => {
-                    break;
-                }
-            };
-        }
-        Ok(res)
-    }
-
-    pub async fn simple_reply(&self, input: &str) -> anyhow::Result<bool> {
+    pub async fn simple_reply(&self, input: &str) -> anyhow::Result<String> {
         let user_prompt = format!("Here is the task for you: {:?}", input);
 
         let max_token = 1000u16;
@@ -391,21 +373,8 @@ impl ImmutableAgent {
                 .expect("Failed to generate reply");
 
         match &output.content {
-            Content::Text(_out) => {
-                let (terminate_or_not, key_points) =
-                    self._is_termination(&_out, &user_prompt).await;
-
-                println!(
-                    "terminate?: {:?}, points: {:?}\n",
-                    terminate_or_not.clone(),
-                    key_points.clone()
-                );
-                if terminate_or_not {
-                    self.get_user_feedback().await;
-                }
-                return Ok(terminate_or_not);
-            }
-            _ => unreachable!(),
+            Content::Text(_out) => Ok(_out.to_string()),
+            _ => Err(anyhow::Error::msg("failed simple reply")),
         }
     }
 
@@ -436,91 +405,4 @@ impl ImmutableAgent {
 
         (terminate_or_not, key_points.join(","))
     }
-
-    pub async fn code_with_python(&self, input: &str) -> anyhow::Result<()> {
-        let formatter = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
-        let mut user_prompt = formatter(&[input]);
-
-        for n in 1..9 {
-            println!("Iteration: {}", n);
-            match chat_inner_async_llama(&CODE_PYTHON_SYSTEM_MESSAGE, &user_prompt, 1000u16)
-                .await?
-                .content
-            {
-                Content::Text(_out) => {
-                    // let head: String = _out.chars().take(200).collect::<String>();
-                    println!("Raw generation {n}:\n {}\n\n", _out.clone());
-                    let (this_round_good, code, exec_result) = run_python_wrapper(&_out).await;
-                    println!("code:\n{}\n\n", code.clone());
-                    println!("Run result {n}: {}\n", exec_result.clone());
-
-                    if this_round_good {
-                        let (terminate_or_not, key_points) =
-                            self._is_termination(&exec_result, &user_prompt).await;
-                        println!("Termination Check: {}\n", terminate_or_not);
-                        if terminate_or_not {
-                            println!("key_points: {:?}\n", key_points);
-
-                            self.get_user_feedback().await;
-                        }
-                    }
-
-                    let formatter = if this_round_good {
-                        ITERATE_CODING_INCORRECT_TEMPLATE.lock().unwrap()
-                    } else {
-                        ITERATE_CODING_FAIL_TEMPLATE.lock().unwrap()
-                    };
-
-                    user_prompt = formatter(&[&code, &exec_result]);
-                }
-                _ => unreachable!(),
-            }
-        }
-        Ok(())
-    }
 }
-
-/* pub async fn compress_chat_history(message_history: &Vec<Message>) -> Vec<Message> {
-    let message_history = message_history.clone();
-    let (system_messages, messages) = message_history.split_at(2);
-    let mut system_messages = system_messages.to_vec();
-
-    let chat_history_text = messages
-        .into_iter()
-        .map(|m| m.content_to_string())
-        .collect::<Vec<String>>()
-        .join("\n");
-
-    let messages = vec![
-        Message {
-            role: Role::System,
-            name: None,
-            content: Content::Text(NEXT_STEP_BY_TOOLCALL.to_string()),
-        },
-        Message {
-            role: Role::User,
-            name: None,
-            content: Content::Text(chat_history_text),
-        },
-    ];
-
-    let max_token = 1000u16;
-    let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token)
-        .await
-        .expect("Failed to generate reply");
-
-    match output.content {
-        Content::Text(compressed) => {
-            let message = Message {
-                role: Role::User,
-                name: None,
-                content: Content::Text(compressed),
-            };
-
-            system_messages.push(message);
-        }
-        _ => unreachable!(),
-    }
-
-    system_messages
-} */

@@ -15,30 +15,31 @@ async fn main() -> Result<()> {
         .planning("Today is 2024-03-18. Write a blogpost about the stock price performance of Nvidia in the past month")
         .await;
 
-    if task_ledger.task_list.is_empty() && solution.is_some() {
-        println!("solution: {:?} ", solution);
-        std::process::exit(0);
-    }
+    // if task_ledger.task_list.is_empty() && solution.is_some() {
+    //     println!("solution: {:?} ", solution);
+    //     std::process::exit(0);
+    // }
 
     loop {
         let task = task_ledger
             .current_task()
             .unwrap_or("no task found".to_string());
 
+        let carry_over = match task_ledger.solution_list.last() {
+            Some(c) => Some(c.to_string()),
+            None => None,
+        };
+
         let res = user_proxy
-            .next_step_by_toolcall(&task)
+            .next_step_by_toolcall_nested(carry_over, &task)
             .await
             .unwrap_or("no result generated".to_string());
-        println!("{:?}", res.clone());
-        let res_alt = user_proxy
-            .iterate_next_step(&res, &task)
-            .await
-            .unwrap_or("no result generated".to_string());
-        println!("{:?}", res_alt.clone());
+        // println!("{:?}", res.clone());
 
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
-        if !task_ledger.record_solution(res_alt) {
+        // tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+
+        if !task_ledger.record_solution(res) {
             break;
         }
     }
