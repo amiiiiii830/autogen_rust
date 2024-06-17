@@ -1,8 +1,10 @@
 pub mod exec_python;
 pub mod immutable_agent;
-pub mod utils;
 pub mod llama_structs;
-pub mod llm_llama_local;
+pub mod llm_utils_together;
+pub mod prompt;
+pub mod task_ledger;
+pub mod utils;
 pub mod webscraper_hook;
 use lazy_static::lazy_static;
 use std::sync::{Arc, Mutex};
@@ -414,6 +416,49 @@ For each function call return a json object with function name and arguments wit
 {"arguments": <args-dict>, 
 "name":"<function-name>"}
 </tool_call>"#.to_string();
+
+    pub static ref CHECK_TASK_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
+        Mutex::new(Box::new(|args: &[&str]| { format!(r#"
+You are a helpful AI assistant with extensive capabilities. Your goal is to help complete tasks and create plausible answers grounded in real-world history of events and physics with minimal steps.
+
+1. **Subtask Review and Breakdown:**
+   - Given the breakdown of subtasks: {} you're working on one of them : "Research Nvidia's stock price performance over the past month"
+   - To complete this subtask, you may need to break it down further into smaller steps.
+   here is the actionable steps created by your peer: [
+    "Search_with_bing for Nvidia's stock price data",
+    "Extract and analyze stock price data",
+    "Visualize stock price performance over the past month"
+]
+   - Review these execution steps for any redundancy or overlap with other subtasks at both the parent task level (tier 1) and within the actionable steps (tier 2).
+
+2. **Consolidation and Update:**
+   - Consolidate any tier 2 steps that perform similar functions as tier 1 tasks.
+   - Create an updated version of the tier 1 task breakdown that ensures atomic segmentation without redundancy.
+   - If you find any redundant or overlapping steps, remove them to ensure efficiency without compromising completeness.
+
+3. **Special Notes:**
+   - Task planning aims to break down actions into executable steps that are neither too trivial nor too large for the agent to complete in one go.
+   - Tier 1 tasks may be too general; use more specific details from tier 2 if they make the tasks more executable.
+   - Respect the tier 1 breakdown generally, but replace with more actionable and grounded items from tier 2 when necessary.
+
+4. **Use Project Objective as Guidance:**
+
+Ultimately, but completing all the sub_tasks, you are to deliver this result: "This blog post will analyze Nvidia's stock price performance over the past month, providing insights into the company's financial health and market trends.", Use this objective to guide your understanding of the overall picture.
+
+Think alound and put your thoughts down in the following template: {{
+    \"my_thought_process\": [
+        \"project_objective: project object I received\",
+        \"tier 1 steps: tier 1 steps I'm given\",
+        \"tier 2 actionable_items: items\","compare_and_replace: Compare tier 1 steps with tier 2 items and replace if tier 2 items are more actionable"
+],
+"updated_sub_task_list": [
+    "sub_task one",
+    "...",
+       "sub_task N”
+]
+    }}
+        "#, args[0]) }))
+    );
 
     pub static ref ITERATE_CODING_START_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
         Mutex::new(Box::new(|args: &[&str]| { format!("Here is the task for you: {}", args[0]) }))

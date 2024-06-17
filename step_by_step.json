@@ -1,0 +1,19 @@
+[
+    "Research Nvidia's stock price performance over the past month",
+    "Collect data on Nvidia's stock price",
+    "Analyze the data to identify trends and patterns",
+    "Write a blog post summarizing the findings",
+    "Edit and proofread the blog post"
+]
+
+   <tool_call>
+{
+    "arguments": {
+        "query": "Nvidia stock price performance over the past month"
+    },
+    "name": "search_with_bing"
+}
+</tool_call>
+
+
+<tool_call>\n{\n    \"arguments\": {\n        \"query\": \"Nvidia stock price\"\n    },\n    \"name\": \"search_with_bing\"\n}\n</tool_call>"<tool_call>\n{\n    \"arguments\": {\n        \"key_points\": \"Analyze the data to identify trends and patterns\"\n    },\n    \"name\": \"code_with_python\"\n}\n</tool_call>"

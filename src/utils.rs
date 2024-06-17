@@ -49,25 +49,30 @@ pub fn parse_next_move_and_(
     (&continue_or_terminate == "TERMINATE", next_move, key_points)
 }
 
-pub fn parse_planning_steps(input: &str) -> Vec<String> {
-    let steps_regex = Regex::new(r#""steps_to_take":\s*(\[[^\]]*\])"#).unwrap();
-    let steps_str = steps_regex
+pub fn parse_planning_sub_tasks(input: &str) -> (Vec<String>, String) {
+    let sub_tasks_regex = Regex::new(r#""sub_tasks":\s*(\[[^\]]*\])"#).unwrap();
+    let sub_tasks_str = sub_tasks_regex
         .captures(input)
         .and_then(|cap| cap.get(1))
         .map_or(String::new(), |m| m.as_str().to_string());
 
-    if steps_str.is_empty() {
-        eprintln!("Failed to extract 'steps_to_take' from input.");
-        return vec![];
+    if sub_tasks_str.is_empty() {
+        eprintln!("Failed to extract 'sub_tasks' from input.");
+        return (vec![], input.to_string());
     }
+    let task_summary_regex = Regex::new(r#""task_summary":\s*"([^"]*)""#).unwrap();
+    let task_summary = task_summary_regex
+        .captures(input)
+        .and_then(|cap| cap.get(1))
+        .map_or(String::new(), |m| m.as_str().to_string());
 
-    let parsed_steps: Vec<String> = match serde_json::from_str(&steps_str) {
+    let parsed_sub_tasks: Vec<String> = match serde_json::from_str(&sub_tasks_str) {
         Ok(val) => val,
         Err(_) => {
-            eprintln!("Failed to parse extracted 'steps_to_take' as JSON.");
-            return vec![];
+            eprintln!("Failed to parse extracted 'sub_tasks' as JSON.");
+            return (vec![], input.to_string());
         }
     };
 
-    parsed_steps
+    (parsed_sub_tasks, task_summary)
 }
