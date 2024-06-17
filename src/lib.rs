@@ -460,6 +460,10 @@ Think alound and put your thoughts down in the following template: {{
         "#, args[0]) }))
     );
 
+    pub static ref ITERATE_NEXT_STEP_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
+        Mutex::new(Box::new(|args: &[&str]| { format!("Given the result from the previous step: {}, here is the task for you: {}", args[0], args[1]) }))
+    );
+
     pub static ref ITERATE_CODING_START_TEMPLATE: Arc<Mutex<FormatterFn>> = Arc::new(
         Mutex::new(Box::new(|args: &[&str]| { format!("Here is the task for you: {}", args[0]) }))
     );

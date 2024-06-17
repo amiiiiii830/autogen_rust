@@ -6,7 +6,7 @@ use crate::utils::*;
 use crate::webscraper_hook::{get_webpage_text, search_with_bing};
 use crate::{
     CODE_PYTHON_SYSTEM_MESSAGE, IS_TERMINATION_SYSTEM_PROMPT, ITERATE_CODING_FAIL_TEMPLATE,
-    ITERATE_CODING_INCORRECT_TEMPLATE, ITERATE_CODING_START_TEMPLATE,
+    ITERATE_CODING_INCORRECT_TEMPLATE, ITERATE_CODING_START_TEMPLATE, ITERATE_NEXT_STEP_TEMPLATE,
 };
 use anyhow;
 use async_openai::types::Role;
@@ -88,14 +88,17 @@ Summarize Findings:
 
 DO NOT further break down the sub-tasks.
 
-reply in the following template:
+Think aloud and write down your thoughts in the following template:
 {
+ "top_of_mind_reply": "how I would instinctively answer this question",
+ "task_needs_break_down_or_not": "is the task difficult, I need multiple steps to solve? if not, no need to create sub_tasks, just repeat the task requirement in task_summary section",
  "sub_tasks": [
         "sub_task one",
         "...",
        "sub_task N”
     ],
 ”task_summary”: "summary”
+”solution_found”: "the solution you may have found in single shot, and its content”
 }
 "#;
 
@@ -115,11 +118,11 @@ Parameters: "task" The task you receive (type:string)
 Required Parameters: ["task"] */
 
 const NEXT_STEP_BY_TOOLCALL: &'static str = r#"
-<|im_start|>system You are a function-calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one function and ONLY ONE to assist with the user query. Do not make assumptions about what values to plug into functions.
+<|im_start|>system You are a function-calling AI model. You are provided with function signatures within <tools></tools> XML tags. You will call one function and ONLY ONE to assist with the user query. Do not make assumptions about what values to plug into functions.
 
 <tools>
 1. **use_intrinsic_knowledge**: 
-Description: Solves tasks using capabilities and knowledge obtained at training time, but it is frozen by the cut-off date and unaware of real-world dates post-training.
+Description: Solves tasks using capabilities and knowledge obtained at training time.
 Special Note: You can handle many fuzzy tasks this way because you have great writing skills, you may provide a common sense solution despite you might not know the exact details. 
 Example Call:
 <tool_call>
@@ -150,7 +153,7 @@ Example Call:
 Function Definitions
 
 use_intrinsic_knowledge
-Description: Solves tasks using built-in capabilities obtained at training time (frozen post cut-off date).
+Description: Solves tasks using built-in capabilities obtained at training time.
 Parameters: "task" The task you receive (type:string)
 Required Parameters: ["task"]
 
@@ -172,6 +175,10 @@ For each function call, return a JSON object with function name and arguments wi
 {"arguments": <args-dict>,   
 "name": "<function_name>"}
 </tool_call>
+"#;
+
+const ITERATE_NEXT_STEP: &'static str = r#"
+<|im_start|>system You are a task solving expert. You follow steps to solve complex problems. For much of the time, you're working iteratively on the sub_tasks, you are given the result from a previous step, you execute on the instruction you receive for your current step.
 "#;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -278,7 +285,7 @@ impl ImmutableAgent {
                 let args = call.clone().arguments.unwrap_or_default();
                 let res = match call.name.as_str() {
                     "use_intrinsic_knowledge" => match args.get("task") {
-                        Some(t) => t.clone(),
+                        Some(t) => format!("task: {:?}", t.clone()),
                         None => String::from("failed in use_intrinsic_knowledge"),
                     },
                     "search_with_bing" => match args.get("query") {
@@ -302,29 +309,49 @@ impl ImmutableAgent {
             }
         }
     }
-    pub async fn planning(&self, input: &str) -> TaskLedger {
+    pub async fn iterate_next_step(
+        &self,
+        prev_solution: &str,
+        input: &str,
+    ) -> anyhow::Result<String> {
+        let max_token = 1000u16;
+
+        let formatter = ITERATE_NEXT_STEP_TEMPLATE.lock().unwrap();
+
+        let user_prompt = formatter(&[prev_solution, input]);
+        let output: LlamaResponseMessage =
+            chat_inner_async_llama(ITERATE_NEXT_STEP, &user_prompt, max_token)
+                .await
+                .expect("Failed to generate reply");
+        match &output.content {
+            Content::Text(res) => Ok(res.to_string()),
+            Content::ToolCall(call) => Err(anyhow::Error::msg("entered tool_call arm incorrectly")),
+        }
+    }
+
+    pub async fn planning(&self, input: &str) -> (TaskLedger, Option<String>) {
         let max_token = 500u16;
         let output: LlamaResponseMessage =
             chat_inner_async_llama(NEXT_STEP_PLANNING, input, max_token)
                 .await
                 .expect("Failed to generate reply");
 
-        let mut task_ledger;
-
         match &output.content {
             Content::Text(_out) => {
-                let (task_list, task_summary) = parse_planning_sub_tasks(_out);
+                let (task_list, task_summary, solution_found) = parse_planning_sub_tasks(_out);
                 println!(
                     "sub_tasks: {:?}\n task_summary: {:?}",
                     task_list.clone(),
                     task_summary.clone()
                 );
 
-                task_ledger = TaskLedger::new(task_list, Some(task_summary));
+                (
+                    TaskLedger::new(task_list, Some(task_summary)),
+                    Some(solution_found),
+                )
             }
             _ => unreachable!(),
         }
-        task_ledger
     }
 
     pub async fn stepper(&self, task_vec: &Vec<String>) -> anyhow::Result<String> {
@@ -410,9 +437,9 @@ impl ImmutableAgent {
         (terminate_or_not, key_points.join(","))
     }
 
-    pub async fn code_with_python(&self, message_text: &str) -> anyhow::Result<()> {
+    pub async fn code_with_python(&self, input: &str) -> anyhow::Result<()> {
         let formatter = ITERATE_CODING_START_TEMPLATE.lock().unwrap();
-        let mut user_prompt = formatter(&[message_text]);
+        let mut user_prompt = formatter(&[input]);
 
         for n in 1..9 {
             println!("Iteration: {}", n);
