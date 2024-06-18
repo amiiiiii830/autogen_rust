@@ -1,12 +1,16 @@
-use core::task;
-
 use anyhow::Result;
-use autogen_rust::{immutable_agent::*, task_ledger};
+use autogen_rust::{exec_python::*, immutable_agent::*, task_ledger};
+use core::task;
 use tokio;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
+
+    let code = r#"```pythonimport sys
+
+print("Hello, World!")
+print("This is some output", file=sys.stderr)```"#;
 
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
 

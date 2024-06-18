@@ -1,16 +1,18 @@
 use anyhow;
 use regex::Regex;
 // use rustpython::vm::Settings;
+use crate::immutable_agent::save_py_to_disk;
 use rustpython::vm;
 use rustpython::InterpreterConfig;
 
 pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
     let code = extract_code(code_wrapped_in_text);
+    let _ = save_py_to_disk("src/test.py", &code).await;
 
-    match run_python_capture(&code) {
+    match run_python_func("src/test.py") {
         Ok(success_result_text) => (true, code, success_result_text),
 
-        Err(err_msg) => (false, code, err_msg),
+        Err(err_msg) => (false, code, err_msg.to_string()),
     }
 }
 
@@ -76,23 +78,34 @@ pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
 //         });
 // }
 
-pub fn run_python_func(func_path: &str) -> anyhow::Result<String, String> {
-    match std::process::Command::new("/Users/jichen/.cargo/bin/rustpython")
-        .arg(func_path)
-        .output()
-    {
-        Ok(out) => {
-            if !out.stdout.is_empty() {
-                Ok(format!(
-                    "Output: {}",
-                    String::from_utf8(out.stdout).unwrap()
-                ))
-            } else {
-                Err("empty result".to_string())
-            }
-        }
+use anyhow::{Context, Result};
+use std::process::{Command, Stdio};
 
-        Err(e) => Err(format!("Failed to execute command: {}", e)),
+pub fn run_python_func(func_path: &str) -> Result<String> {
+    // Create a new Command to run the Python interpreter
+    let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")
+        .arg(func_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start Python process")?;
+
+    // Capture the output from stdout and stderr
+    let output = cmd.wait_with_output().context("Failed to read output")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Check if there is any error in stderr
+    if !stderr.is_empty() {
+        return Err(anyhow::anyhow!("Error: {}", stderr));
+    }
+
+    // Check if there is any result in stdout
+    if !stdout.is_empty() {
+        Ok(format!("Output: {}", stdout))
+    } else {
+        Err(anyhow::anyhow!("empty result"))
     }
 }
 
