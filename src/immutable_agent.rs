@@ -8,12 +8,14 @@ use crate::{
     CODE_PYTHON_SYSTEM_MESSAGE, IS_TERMINATION_SYSTEM_PROMPT, ITERATE_CODING_FAIL_TEMPLATE,
     ITERATE_CODING_INCORRECT_TEMPLATE, ITERATE_CODING_START_TEMPLATE, ITERATE_NEXT_STEP_TEMPLATE,
 };
-use anyhow;
 use async_openai::types::Role;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::fs::File;
+use tokio::io::{self, AsyncWriteExt};
+use anyhow::{Result, Context};
 
 pub static GROUNDING_CHECK_TEMPLATE: Lazy<String> = Lazy::new(|| {
     let today = Utc::now().format("%Y-%m-%dT").to_string();
@@ -524,3 +526,15 @@ impl ImmutableAgent {
 
     system_messages
 } */
+
+pub async fn save_py_to_disk(path: &str, code: &str) -> Result<()> {
+    let mut file = File::create(path)
+        .await
+        .context("Failed to create or open file")?;
+
+    file.write_all(code.as_bytes())
+        .await
+        .context("Failed to write code to file")?;
+
+    Ok(())
+}

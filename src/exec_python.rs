@@ -1,18 +1,23 @@
 use anyhow;
 use regex::Regex;
-// use rustpython::vm::Settings;
+use crate::immutable_agent::save_py_to_disk;
 use rustpython::vm;
 use rustpython::InterpreterConfig;
 
 pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
+    println!("raw code: {:?}\n\n", code_wrapped_in_text.clone());
     let code = extract_code(code_wrapped_in_text);
+    println!("clean code: {:?}\n\n", code.clone());
 
-    match run_python_capture(&code) {
+    let _ = save_py_to_disk("src/test.py", &code).await;
+
+    match run_python_func("src/test.py") {
         Ok(success_result_text) => (true, code, success_result_text),
 
-        Err(err_msg) => (false, code, err_msg),
+        Err(err_msg) => (false, code, err_msg.to_string()),
     }
 }
+
 
 pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
     let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
@@ -97,7 +102,7 @@ pub fn run_python_func(func_path: &str) -> anyhow::Result<String, String> {
 }
 
 pub fn extract_code(text: &str) -> String {
-    let multi_line_pattern = r"(?s)```python(.*?)```";
+    let multi_line_pattern = r"(?s)```(.*?)```";
     let mut program = String::new();
 
     let multi_line_regex = Regex::new(multi_line_pattern).unwrap();
