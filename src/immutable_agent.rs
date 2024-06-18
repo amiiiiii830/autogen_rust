@@ -4,7 +4,7 @@ use crate::llm_utils_together::*;
 use crate::task_ledger::*;
 use crate::utils::*;
 use crate::webscraper_hook::{get_webpage_text, search_with_bing};
-use crate::{IS_TERMINATION_SYSTEM_PROMPT, ITERATE_NEXT_STEP_TEMPLATE};
+use crate::{IS_TERMINATION_SYSTEM_PROMPT, ITERATE_NEXT_STEP_TEMPLATE,NEXT_STEP_PLANNING};
 use anyhow;
 use async_openai::types::Role;
 use chrono::Utc;
@@ -12,30 +12,30 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const NEXT_STEP_PLANNING: &'static str = r#"
-<|im_start|>system You are a helpful AI assistant. Your task is to decompose complex tasks into clear, manageable sub-tasks and provide high-level guidance.
+// const NEXT_STEP_PLANNING: &'static str = r#"
+// <|im_start|>system You are a helpful AI assistant. Your task is to decompose complex tasks into clear, manageable sub-tasks and provide high-level guidance.
 
-Define Objective:
-Clearly state the main goal.
-Break Down Tasks:
-Divide the main goal into logical, high-level sub-tasks without delving into excessive detail.
-Summarize Findings:
+// Define Objective:
+// Clearly state the main goal.
+// Break Down Tasks:
+// Divide the main goal into logical, high-level sub-tasks without delving into excessive detail.
+// Summarize Findings:
 
-DO NOT further break down the sub-tasks.
+// DO NOT further break down the sub-tasks.
 
-Think aloud and write down your thoughts in the following template:
-{
- "top_of_mind_reply": "how I would instinctively answer this question",
- "task_needs_break_down_or_not": "is the task difficult, I need multiple steps to solve? if not, no need to create sub_tasks, just repeat the task requirement in task_summary section",
- "sub_tasks": [
-        "sub_task one",
-        "...",
-       "sub_task N”
-    ],
-”task_summary”: "summary”
-”solution_found”: "the solution you may have found in single shot, and its content”
-}
-"#;
+// Think aloud and write down your thoughts in the following template:
+// {
+//  "top_of_mind_reply": "how I would instinctively answer this question",
+//  "task_needs_break_down_or_not": "is the task difficult, I need multiple steps to solve? if not, no need to create sub_tasks, just repeat the task requirement in task_summary section",
+//  "sub_tasks": [
+//         "sub_task one",
+//         "...",
+//        "sub_task N”
+//     ],
+// ”task_summary”: "summary”
+// ”solution_found”: "the solution you may have found in single shot, and its content”
+// }
+// "#;
 
 const NEXT_STEP_BY_TOOLCALL: &'static str = r#"
 <|im_start|>system You are a function-calling AI model. You are provided with function signatures within <tools></tools> XML tags. You will call one function and ONLY ONE to assist with the user query. Do not make assumptions about what values to plug into functions.
@@ -341,7 +341,7 @@ impl ImmutableAgent {
     pub async fn planning(&self, input: &str) -> (TaskLedger, Option<String>) {
         let max_token = 500u16;
         let output: LlamaResponseMessage =
-            chat_inner_async_llama(NEXT_STEP_PLANNING, input, max_token)
+            chat_inner_async_llama(&NEXT_STEP_PLANNING, input, max_token)
                 .await
                 .expect("Failed to generate reply");
 

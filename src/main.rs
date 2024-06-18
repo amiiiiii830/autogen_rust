@@ -12,7 +12,8 @@ async fn main() -> Result<()> {
 
     let (mut task_ledger, solution) = user_proxy
         // .planning("tell me a joke")
-        .planning("Today is 2024-03-18. Write a blogpost about the stock price performance of Nvidia in the past month")
+        .planning("find about how old is Joe Biden")
+        // .planning("Today is 2024-03-18. Write a blogpost about the stock price performance of Nvidia in the past month")
         .await;
 
     // if task_ledger.task_list.is_empty() && solution.is_some() {
@@ -21,9 +22,10 @@ async fn main() -> Result<()> {
     // }
 
     loop {
+        let task_summary = task_ledger.clone().parent_task.unwrap_or("TERMINATE".to_string()).clone();
         let task = task_ledger
             .current_task()
-            .unwrap_or("no task found".to_string());
+            .unwrap_or(task_summary);
 
         let carry_over = match task_ledger.solution_list.last() {
             Some(c) => Some(c.to_string()),

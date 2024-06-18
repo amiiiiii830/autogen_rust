@@ -25,7 +25,7 @@ pub async fn chat_inner_async_llama(
 
     let uri = "https://api.together.xyz/v1/chat/completions";
     let body = serde_json::to_vec(&serde_json::json!({
-        "temperature": 0.7,
+        "temperature": 0.1,
         "max_tokens": max_token,
        "model": "meta-llama/Llama-3-70b-chat-hf",
         "messages": messages,

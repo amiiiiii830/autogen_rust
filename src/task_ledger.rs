@@ -1,3 +1,6 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TaskLedger {
     current_idx: usize,
     pub task_list: Vec<String>,
@@ -5,6 +8,7 @@ pub struct TaskLedger {
     pub parent_task: Option<String>,
     pub task_done: bool,
 }
+
 
 impl TaskLedger {
     pub fn new(task_list: Vec<String>, parent_task: Option<String>) -> Self {

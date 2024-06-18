@@ -6,8 +6,44 @@ pub mod prompt;
 pub mod task_ledger;
 pub mod utils;
 pub mod webscraper_hook;
+use chrono::Utc;
 use lazy_static::lazy_static;
 use std::sync::{Arc, Mutex};
+
+lazy_static! {
+    pub static ref TODAY: String = {
+        let date = Utc::now().date_naive();
+        date.format("%Y-%m-%d").to_string()
+    };
+    pub static ref NEXT_STEP_PLANNING: String = format!(
+        r#"
+<|im_start|>system You are a helpful AI assistant. Your task is to decompose complex tasks into clear, manageable sub-tasks and provide high-level guidance.
+
+Define Objective:
+Clearly state the main goal.
+Break Down Tasks:
+Divide the main goal into logical, high-level sub-tasks without delving into excessive detail.
+Summarize Findings:
+
+DO NOT further break down the sub-tasks.
+
+FYI, today is {}
+Think aloud and write down your thoughts in the following template:
+{{
+ "top_of_mind_reply": "how I would instinctively answer this question",
+ "task_needs_break_down_or_not": "is the task difficult, I need multiple steps to solve? if not, no need to create sub_tasks, just repeat the task requirement in task_summary section",
+ "sub_tasks": [
+        "sub_task one",
+        "...",
+       "sub_task N”
+    ],
+”task_summary”: "summary”
+”solution_found”: "the solution you may have found in single shot, and its content”
+}}
+"#,
+        &*TODAY
+    );
+}
 
 type FormatterFn = Box<dyn (Fn(&[&str]) -> String) + Send + Sync>;
 
@@ -393,4 +429,3 @@ Think alound and put your thoughts down in the following template: {{
         agent.();
     }
 } */
-
