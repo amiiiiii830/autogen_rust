@@ -340,6 +340,7 @@ impl ImmutableAgent {
 
     pub async fn planning(&self, input: &str) -> (TaskLedger, Option<String>) {
         let max_token = 500u16;
+        println!("planning: {:?}", &*NEXT_STEP_PLANNING);
         let output: LlamaResponseMessage =
             chat_inner_async_llama(&NEXT_STEP_PLANNING, input, max_token)
                 .await

@@ -28,6 +28,8 @@ Summarize Findings:
 DO NOT further break down the sub-tasks.
 
 FYI, today is {}
+Integrate today's date into the task if needed.
+
 Think aloud and write down your thoughts in the following template:
 {{
  "top_of_mind_reply": "how I would instinctively answer this question",
