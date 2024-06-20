@@ -1,4 +1,5 @@
 use anyhow::Result;
+use autogen_rust::webscraper_hook::*;
 use autogen_rust::{immutable_agent::*, task_ledger};
 use tokio;
 
@@ -8,9 +9,24 @@ async fn main() -> Result<()> {
 
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
 
-    let code    = user_proxy.code_with_python("create a 5x5 tick tac toe game in python").await?;
+    let guide =
+        "today is 2024-06-18, find the stock price info of Nvidia in the past month".to_string();
 
-return Ok(());
+    let ve = search_with_bing(
+        "today is 2024-06-18, find the stock price info of Nvidia in the past month",
+    )
+    .await?;
+
+    for (url, _) in ve {
+        let res = get_webpage_guided(url, &guide).await;
+
+        println!("solution: {:?}\n\n ", res);
+    }
+    return Ok(());
+    let code = user_proxy
+        .code_with_python("create a 5x5 tick tac toe game in python")
+        .await?;
+
     let (mut task_ledger, solution) = user_proxy
         // .planning("tell me a joke")
         .planning("Today is 2024-03-18. Write code to find the stock price performance of Nvidia in the past month")
@@ -22,8 +38,11 @@ return Ok(());
     }
 
     loop {
-           let task_summary = task_ledger.clone().parent_task.unwrap_or("no task".to_string());
-     let task = task_ledger.current_task().unwrap_or(task_summary);
+        let task_summary = task_ledger
+            .clone()
+            .parent_task
+            .unwrap_or("no task".to_string());
+        let task = task_ledger.current_task().unwrap_or(task_summary);
 
         // let _ = user_proxy
         //     .code_with_python("Write python code to show the stock price performance of Nvidia in the past month")

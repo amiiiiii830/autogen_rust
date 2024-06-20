@@ -1,6 +1,27 @@
+use crate::llm_utils::chat_inner_async_wrapper_text;
+use crate::{TOGETHER_CONFIG, WEBPAGE_CLEAN_TEMPLATE, WEBPAGE_CLEAN_WRAPPER};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
 use serde::Deserialize;
+
+pub async fn get_webpage_guided(url: String, guide: &str) -> anyhow::Result<String> {
+    let client = Client::builder().build()?;
+
+    let url = format!("https://code.flows.network/lambda/nsdNiGHUlT?url={url}");
+
+    let res = client.get(&url).send().await?.text().await?;
+    println!("scraped text: {:?}\n\n ", res.clone());
+
+    let formatter = WEBPAGE_CLEAN_WRAPPER.lock().unwrap();
+
+    let user_prompt = formatter(&[guide, &res]);
+
+    let clean =
+        chat_inner_async_wrapper_text(&TOGETHER_CONFIG, WEBPAGE_CLEAN_TEMPLATE, &user_prompt, 1500)
+            .await?;
+
+    Ok(clean)
+}
 
 pub async fn get_webpage_text(url: String) -> anyhow::Result<String> {
     let client = Client::builder().build()?;
@@ -10,7 +31,6 @@ pub async fn get_webpage_text(url: String) -> anyhow::Result<String> {
     let res = client.get(&url).send().await?.text().await?;
     Ok(res)
 }
-
 
 pub async fn search_with_bing(query: &str) -> anyhow::Result<Vec<(String, String)>> {
     #[allow(unused)]
@@ -84,7 +104,7 @@ pub async fn search_with_bing(query: &str) -> anyhow::Result<Vec<(String, String
     let encoded_query = urlencoding::encode(query);
 
     let url_str =
-        format!("https://api.bing.microsoft.com/v7.0/search?count=1&q={}&responseFilter=Webpages&setLang=en", encoded_query);
+        format!("https://api.bing.microsoft.com/v7.0/search?count=3&q={}&responseFilter=Webpages&setLang=en", encoded_query);
     let mut headers = HeaderMap::new();
     let bing_key = std::env::var("BING_API_KEY").unwrap_or("bing_api_key not found".to_string());
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));

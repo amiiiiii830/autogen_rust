@@ -34,6 +34,9 @@ const DEEPSEEK_CONFIG: LlmConfig = LlmConfig {
 
 type FormatterFn = Box<dyn (Fn(&[&str]) -> String) + Send + Sync>;
 
+const WEBPAGE_CLEAN_TEMPLATE: &'static str = r#"
+<|im_start|>system You are a helpful AI assistant. You pick data from a given source according to instructions. You either pick some data if you see it irrelevant or you don't pick otherwise. You DO NOT transform the data. You DO NOT OMMIT any data that's relevant to the task. Extract the data in its entirety, echo extracted data verbatim."#;
+
 static _TEMPLATE_PROMPT: &'static str = r#"
 I'm creating a large language model prompt that use these strategies:
 1. Goal directed planning
@@ -553,6 +556,12 @@ Think alound and put your thoughts down in the following template: {{
             })
         )
     );
+    pub static ref WEBPAGE_CLEAN_WRAPPER: Arc<Mutex<FormatterFn>> = Arc::new(
+        Mutex::new(Box::new(|args: &[&str]| { format!(r#"
+"here is your task: {}, extract the information you're tasked to find in the following text: {}"#,
+        args[0], args[1]
+    )
+})));
 }
 
 /* pub async fn entry(inp: &str) {
