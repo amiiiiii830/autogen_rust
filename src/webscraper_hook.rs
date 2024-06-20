@@ -11,7 +11,8 @@ pub async fn get_webpage_text(url: String) -> anyhow::Result<String> {
     Ok(res)
 }
 
-pub async fn search_with_bing(query: &str) -> anyhow::Result<String> {
+
+pub async fn search_with_bing(query: &str) -> anyhow::Result<Vec<(String, String)>> {
     #[allow(unused)]
     #[allow(non_snake_case)]
     #[derive(Debug, Clone, Deserialize)]
@@ -102,8 +103,7 @@ pub async fn search_with_bing(query: &str) -> anyhow::Result<String> {
         .webPages
         .value
         .iter()
-        .map(|val| format!("webpage at {} states: {}", val.url, val.snippet))
-        .collect::<Vec<String>>()
-        .join("\n");
+        .map(|val| (val.url.clone(), val.snippet.clone()))
+        .collect::<Vec<(String, String)>>();
     Ok(out)
 }

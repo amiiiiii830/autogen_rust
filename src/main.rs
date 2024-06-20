@@ -1,5 +1,3 @@
-use core::task;
-
 use anyhow::Result;
 use autogen_rust::{immutable_agent::*, task_ledger};
 use tokio;
@@ -10,44 +8,50 @@ async fn main() -> Result<()> {
 
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
 
-    // let (mut task_ledger, solution) = user_proxy
-    //     // .planning("tell me a joke")
-    //     .planning("Today is 2024-03-18. Write a blogpost about the stock price performance of Nvidia in the past month")
-    //     .await;
+    let code    = user_proxy.code_with_python("create a 5x5 tick tac toe game in python").await?;
 
-    // if task_ledger.task_list.is_empty() && solution.is_some() {
-    //     println!("solution: {:?} ", solution);
-    //     std::process::exit(0);
-    // }
+return Ok(());
+    let (mut task_ledger, solution) = user_proxy
+        // .planning("tell me a joke")
+        .planning("Today is 2024-03-18. Write code to find the stock price performance of Nvidia in the past month")
+        .await;
 
-    // loop {
-    //     let task = task_ledger
-    //         .current_task()
-    //         .unwrap_or("no task found".to_string());
+    if task_ledger.task_list.is_empty() && solution.is_some() {
+        println!("solution: {:?} ", solution);
+        std::process::exit(0);
+    }
 
-        let _ = user_proxy
-            .code_with_python("Write python code to show the stock price performance of Nvidia in the past month")
-            .await;
-    //     let res_alt = user_proxy
-    //         .iterate_next_step(&res, &task)
-    //         .await
-    //         .unwrap_or("no result generated".to_string());
-    //     println!("{:?}", res_alt.clone());
+    loop {
+           let task_summary = task_ledger.clone().parent_task.unwrap_or("no task".to_string());
+     let task = task_ledger.current_task().unwrap_or(task_summary);
 
-    //     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        // let _ = user_proxy
+        //     .code_with_python("Write python code to show the stock price performance of Nvidia in the past month")
+        //     .await;
+        let carry_over = match task_ledger.solution_list.last() {
+            Some(c) => Some(c.clone()),
+            None => None,
+        };
+        let res_alt = user_proxy
+            .next_step_by_toolcall(carry_over, &task)
+            .await
+            .unwrap_or("no result generated".to_string());
+        println!("{:?}", res_alt.clone());
 
-    //     if !task_ledger.record_solution(res_alt) {
-    //         break;
-    //     }
-    // }
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
-    // println!(
-    //     "{:?}",
-    //     &task_ledger
-    //         .solution_list
-    //         .last()
-    //         .unwrap_or(&"no final result".to_string())
-    // );
+        if !task_ledger.record_solution(res_alt) {
+            break;
+        }
+    }
+
+    println!(
+        "{:?}",
+        &task_ledger
+            .solution_list
+            .last()
+            .unwrap_or(&"no final result".to_string())
+    );
 
     Ok(())
 }

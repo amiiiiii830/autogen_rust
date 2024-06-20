@@ -1,3 +1,4 @@
+#[derive(Clone, Debug)]
 pub struct TaskLedger {
     current_idx: usize,
     pub task_list: Vec<String>,

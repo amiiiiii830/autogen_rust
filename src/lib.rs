@@ -1,13 +1,36 @@
 pub mod exec_python;
 pub mod immutable_agent;
 pub mod llama_structs;
-pub mod llm_utils_together;
+pub mod llm_utils;
 pub mod prompt;
 pub mod task_ledger;
 pub mod utils;
 pub mod webscraper_hook;
 use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct LlmConfig {
+    pub model: &'static str,
+    pub base_url: &'static str,
+    pub context_size: usize,
+    pub api_key_str: &'static str,
+}
+
+const TOGETHER_CONFIG: LlmConfig = LlmConfig {
+    model: "meta-llama/Llama-3-70b-chat-hf",
+    context_size: 8192,
+    base_url: "https://api.together.xyz/v1/chat/completions",
+    api_key_str: "TOGETHER_API_KEY",
+};
+
+const DEEPSEEK_CONFIG: LlmConfig = LlmConfig {
+    model: "deepseek-coder",
+    context_size: 16000,
+    base_url: "https://api.deepseek.com/chat/completions",
+    api_key_str: "SEEK_API_KEY",
+};
 
 type FormatterFn = Box<dyn (Fn(&[&str]) -> String) + Send + Sync>;
 
@@ -244,6 +267,7 @@ Provide clean, executable Python code blocks to solve tasks, without adding expl
 6. Avoid asking users to copy and paste results. Code should be self-contained and provide outputs directly.
 7. If an error occurs, provide a corrected code block. Offer complete solutions rather than partial code snippets or modifications.
 8. Verify solutions rigorously and ensure the code addresses the task effectively without user intervention beyond code execution.
+9. Ensure the output of your code is ALWAYS in text format, AVOID using code that generates charts or images as result.
 Use this approach to ensure that the user receives precise, direct, and executable Python code for their tasks."#.to_string();
 
     // Reply "TERMINATE" in the end when everything is done.

@@ -1,21 +1,22 @@
 use crate::exec_python::*;
 use crate::llama_structs::*;
-use crate::llm_utils_together::*;
+use crate::llm_utils::*;
 use crate::task_ledger::*;
 use crate::utils::*;
 use crate::webscraper_hook::{get_webpage_text, search_with_bing};
 use crate::{
-    CODE_PYTHON_SYSTEM_MESSAGE, IS_TERMINATION_SYSTEM_PROMPT, ITERATE_CODING_FAIL_TEMPLATE,
-    ITERATE_CODING_INCORRECT_TEMPLATE, ITERATE_CODING_START_TEMPLATE, ITERATE_NEXT_STEP_TEMPLATE,
+    CODE_PYTHON_SYSTEM_MESSAGE, DEEPSEEK_CONFIG, IS_TERMINATION_SYSTEM_PROMPT,
+    ITERATE_CODING_FAIL_TEMPLATE, ITERATE_CODING_INCORRECT_TEMPLATE, ITERATE_CODING_START_TEMPLATE,
+    ITERATE_NEXT_STEP_TEMPLATE, TOGETHER_CONFIG,
 };
+use anyhow::{Context, Result};
 use async_openai::types::Role;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs::File;
-use tokio::io::{self, AsyncWriteExt};
-use anyhow::{Result, Context};
+use tokio::io::AsyncWriteExt;
 
 pub static GROUNDING_CHECK_TEMPLATE: Lazy<String> = Lazy::new(|| {
     let today = Utc::now().format("%Y-%m-%dT").to_string();
@@ -103,21 +104,6 @@ Think aloud and write down your thoughts in the following template:
 ”solution_found”: "the solution you may have found in single shot, and its content”
 }
 "#;
-
-/* 2. **do_grounding_check**:
-Description: Provides current date or suggests ways to get grounding information in real-world locality, history of events or physics.
-Current Date: 2024-06-02
-Example Call:
-<tool_call>
-{"arguments": {"task": "It's now 2024-06-02, find out how old would Steve Jobs be if he didn't die"},
-"name": "do_grounding_check"}
-</tool_call>
-
-
-do_grounding_check
-Description: Provides current date or suggests ways to get grounding information in real-world locality or physics (current date is 2024-06-02).
-Parameters: "task" The task you receive (type:string)
-Required Parameters: ["task"] */
 
 const NEXT_STEP_BY_TOOLCALL: &'static str = r#"
 <|im_start|>system You are a function-calling AI model. You are provided with function signatures within <tools></tools> XML tags. You will call one function and ONLY ONE to assist with the user query. Do not make assumptions about what values to plug into functions.
@@ -270,10 +256,14 @@ impl ImmutableAgent {
         return input;
     }
 
-    pub async fn next_step_by_toolcall(&self, input: &str) -> anyhow::Result<String> {
+    pub async fn next_step_by_toolcall(
+        &self,
+        carry_over: Option<String>,
+        input: &str,
+    ) -> anyhow::Result<String> {
         let max_token = 1000u16;
         let output: LlamaResponseMessage =
-            chat_inner_async_llama(NEXT_STEP_BY_TOOLCALL, input, max_token)
+            chat_inner_async_wrapper(&TOGETHER_CONFIG, NEXT_STEP_BY_TOOLCALL, input, max_token)
                 .await
                 .expect("Failed to generate reply");
         match &output.content {
@@ -287,13 +277,35 @@ impl ImmutableAgent {
                 let args = call.clone().arguments.unwrap_or_default();
                 let res = match call.name.as_str() {
                     "use_intrinsic_knowledge" => match args.get("task") {
-                        Some(t) => format!("task: {:?}", t.clone()),
+                        Some(t) => {
+                            println!("entered intrinsic arm: {:?}", t.clone());
+                            //why program doesn't continue to execute the next async func?
+                            match self.iterate_next_step(carry_over, t).await {
+                                Ok(res) => {
+                                    println!("intrinsic result: {:?}", res.clone());
+                                    res
+                                }
+
+                                Err(_) => String::from("failed in use_intrinsic_knowledge"),
+                            }
+                        }
                         None => String::from("failed in use_intrinsic_knowledge"),
                     },
                     "search_with_bing" => match args.get("query") {
-                        Some(q) => search_with_bing(&q)
-                            .await
-                            .unwrap_or("search_with_bing failed".to_string()),
+                        Some(q) => {
+                            println!("entered bing arm: {:?}", q.clone());
+
+                            match search_with_bing(&q).await {
+                                Ok(ve) => {
+                                    println!("bing result: {:?}", ve.clone());
+
+                                    let url = &ve[0].0;
+                                    let res = get_webpage_text(url.to_string()).await?;
+                                    res.chars().take(6_000).collect::<String>()
+                                }
+                                Err(_) => String::from("search failed to get useful data"),
+                            }
+                        }
                         None => String::from("failed in search_with_bing"),
                     },
                     "code_with_python" => match args.get("key_points") {
@@ -313,16 +325,23 @@ impl ImmutableAgent {
     }
     pub async fn iterate_next_step(
         &self,
-        prev_solution: &str,
+        carry_over: Option<String>,
         input: &str,
     ) -> anyhow::Result<String> {
         let max_token = 1000u16;
 
         let formatter = ITERATE_NEXT_STEP_TEMPLATE.lock().unwrap();
+        let user_prompt = match &carry_over {
+            Some(c) => formatter(&[&c, input]),
+            None => input.to_string(),
+        };
 
-        let user_prompt = formatter(&[prev_solution, input]);
+        let system_prompt = match &carry_over {
+            Some(_) => ITERATE_NEXT_STEP,
+            None => "<|im_start|>system You are a task solving expert.",
+        };
         let output: LlamaResponseMessage =
-            chat_inner_async_llama(ITERATE_NEXT_STEP, &user_prompt, max_token)
+            chat_inner_async_wrapper(&TOGETHER_CONFIG, ITERATE_NEXT_STEP, &user_prompt, max_token)
                 .await
                 .expect("Failed to generate reply");
         match &output.content {
@@ -334,7 +353,7 @@ impl ImmutableAgent {
     pub async fn planning(&self, input: &str) -> (TaskLedger, Option<String>) {
         let max_token = 500u16;
         let output: LlamaResponseMessage =
-            chat_inner_async_llama(NEXT_STEP_PLANNING, input, max_token)
+            chat_inner_async_wrapper(&TOGETHER_CONFIG, NEXT_STEP_PLANNING, input, max_token)
                 .await
                 .expect("Failed to generate reply");
 
@@ -356,41 +375,18 @@ impl ImmutableAgent {
         }
     }
 
-    pub async fn stepper(&self, task_vec: &Vec<String>) -> anyhow::Result<String> {
-        let mut task_vec = task_vec.clone();
-        let mut initial_input = match task_vec.pop() {
-            Some(s) => s,
-            None => {
-                return Err(anyhow::Error::msg("no task to handle"));
-            }
-        };
-        let mut res;
-        loop {
-            res = self
-                .next_step_by_toolcall(&initial_input)
-                .await
-                .unwrap_or("next_step_by_toolcall failed".to_string());
-            initial_input = match task_vec.pop() {
-                Some(s) => format!(
-                    "Here is the result from previous step: {}, here is the next task: {}",
-                    res, s
-                ),
-                None => {
-                    break;
-                }
-            };
-        }
-        Ok(res)
-    }
-
     pub async fn simple_reply(&self, input: &str) -> anyhow::Result<bool> {
         let user_prompt = format!("Here is the task for you: {:?}", input);
 
         let max_token = 1000u16;
-        let output: LlamaResponseMessage =
-            chat_inner_async_llama(&self.system_prompt, &user_prompt, max_token)
-                .await
-                .expect("Failed to generate reply");
+        let output: LlamaResponseMessage = chat_inner_async_wrapper(
+            &TOGETHER_CONFIG,
+            &self.system_prompt,
+            &user_prompt,
+            max_token,
+        )
+        .await
+        .expect("Failed to generate reply");
 
         match &output.content {
             Content::Text(_out) => {
@@ -424,9 +420,14 @@ impl ImmutableAgent {
 
         println!("{:?}", user_prompt.clone());
 
-        let raw_reply = chat_inner_async_llama(&IS_TERMINATION_SYSTEM_PROMPT, &user_prompt, 300)
-            .await
-            .expect("llm generation failure");
+        let raw_reply = chat_inner_async_wrapper(
+            &TOGETHER_CONFIG,
+            &IS_TERMINATION_SYSTEM_PROMPT,
+            &user_prompt,
+            300,
+        )
+        .await
+        .expect("llm generation failure");
 
         println!(
             "_is_termination raw_reply: {:?}",
@@ -445,9 +446,14 @@ impl ImmutableAgent {
 
         for n in 1..9 {
             println!("Iteration: {}", n);
-            match chat_inner_async_llama(&CODE_PYTHON_SYSTEM_MESSAGE, &user_prompt, 1000u16)
-                .await?
-                .content
+            match chat_inner_async_wrapper(
+                &DEEPSEEK_CONFIG,
+                &CODE_PYTHON_SYSTEM_MESSAGE,
+                &user_prompt,
+                1000u16,
+            )
+            .await?
+            .content
             {
                 Content::Text(_out) => {
                     // let head: String = _out.chars().take(200).collect::<String>();
@@ -507,7 +513,7 @@ impl ImmutableAgent {
     ];
 
     let max_token = 1000u16;
-    let output: LlamaResponseMessage = chat_inner_async_llama(messages.clone(), max_token)
+    let output: LlamaResponseMessage = chat_inner_async_wrapper(messages.clone(), max_token)
         .await
         .expect("Failed to generate reply");
 

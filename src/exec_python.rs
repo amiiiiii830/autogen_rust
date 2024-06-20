@@ -1,25 +1,33 @@
-use anyhow;
-use regex::Regex;
 use crate::immutable_agent::save_py_to_disk;
-use rustpython::vm;
-use rustpython::InterpreterConfig;
+use regex::Regex;
+// use rustpython::vm;
+// use rustpython::InterpreterConfig;
+use anyhow::Result;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 
 pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
-    println!("raw code: {:?}\n\n", code_wrapped_in_text.clone());
+    println!("raw code: {:?}\n\n", code_wrapped_in_text);
     let code = extract_code(code_wrapped_in_text);
     println!("clean code: {:?}\n\n", code.clone());
 
     let _ = save_py_to_disk("src/test.py", &code).await;
 
-    match run_python_func("src/test.py") {
-        Ok(success_result_text) => (true, code, success_result_text),
+    match run_python_func("/Users/jichen/Projects/autogen_rust/src/test.py").await {
+        Ok(success_result_text) => {
+            println!("success: {:?}", success_result_text);
 
-        Err(err_msg) => (false, code, err_msg.to_string()),
+            (true, code, success_result_text)
+        }
+        Err(err_msg) => {
+            println!("failure: {:?}", err_msg.to_string());
+
+            (false, code, err_msg.to_string())
+        }
     }
 }
 
-
-pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
+/* pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
     let interpreter = InterpreterConfig::new().init_stdlib().interpreter();
     interpreter.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
@@ -57,7 +65,7 @@ pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
             }
         }
     })
-}
+} */
 
 // pub fn run_python_vm(code: &str) {
 //     let settings = Settings::default();
@@ -81,28 +89,44 @@ pub fn run_python_capture(code: &str) -> anyhow::Result<String, String> {
 //         });
 // }
 
-pub fn run_python_func(func_path: &str) -> anyhow::Result<String, String> {
-    match std::process::Command::new("/Users/jichen/.cargo/bin/rustpython")
+pub async fn run_python_func(func_path: &str) -> Result<String> {
+    let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")
         .arg(func_path)
-        .output()
-    {
-        Ok(out) => {
-            if !out.stdout.is_empty() {
-                Ok(format!(
-                    "Output: {}",
-                    String::from_utf8(out.stdout).unwrap()
-                ))
-            } else {
-                Err("empty result".to_string())
-            }
-        }
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-        Err(e) => Err(format!("Failed to execute command: {}", e)),
+    let stdout = cmd.stdout.take().unwrap();
+    let stderr = cmd.stderr.take().unwrap();
+
+    let mut stdout_lines = BufReader::new(stdout).lines();
+    let mut stderr_lines = BufReader::new(stderr).lines();
+
+    let mut stdout_output = String::new();
+    let mut stderr_output = String::new();
+
+    while let Some(line) = stdout_lines.next() {
+        stdout_output.push_str(&line?);
+        stdout_output.push('\n');
+    }
+
+    while let Some(line) = stderr_lines.next() {
+        stderr_output.push_str(&line?);
+        stderr_output.push('\n');
+    }
+
+    let status = cmd.wait()?;
+
+    if status.success() {
+        Ok(stdout_output)
+    } else {
+        Err(anyhow::anyhow!("Error: {}", stderr_output))
     }
 }
 
 pub fn extract_code(text: &str) -> String {
-    let multi_line_pattern = r"(?s)```(.*?)```";
+    let multi_line_pattern = r"(?s)```python(.*?)```";
     let mut program = String::new();
 
     let multi_line_regex = Regex::new(multi_line_pattern).unwrap();
