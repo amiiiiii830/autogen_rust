@@ -3,10 +3,13 @@ use crate::llm_utils::chat_inner_async_wrapper_text;
 use regex::Regex;
 // use rustpython::vm;
 // use rustpython::InterpreterConfig;
-use crate::{RUN_FUNC_REACT, TOGETHER_CONFIG};
+use crate::{QWEN_CONFIG, RUN_FUNC_REACT, TOGETHER_CONFIG};
 use anyhow::Result;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+use std::io::Write;
+use tokio::sync::mpsc;
+use tokio::task;
 
 pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
     println!("raw code: {:?}\n\n", code_wrapped_in_text);
@@ -69,37 +72,13 @@ pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, St
     })
 } */
 
-// pub fn run_python_vm(code: &str) {
-//     let settings = Settings::default();
-//     let settings = Settings::with_path(settings, "/Users/jichen/.cargo/bin/rustpython".to_owned());
-//     // let settings = Settings::with_path(
-//     //     settings,
-//     //     "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/".to_owned(),
-//     // );
-
-//     vm::Interpreter
-//         ::with_init(settings, |vm| {
-//             vm.add_native_modules(rustpython_stdlib::get_module_inits());
-//             vm.add_frozen(
-//                 rustpython_vm::py_freeze!(
-//                     dir = "/Users/jichen/Downloads/RustPython-0.3.1/pylib/Lib/"
-//                 )
-//             );
-//         })
-//         .enter(|vm| {
-//             let _ = vm.run_code_string(vm.new_scope_with_builtins(), code, "<...>".to_owned());
-//         });
-// }
 
 pub async fn llm_play(input: &str) -> Result<String> {
-    let res = chat_inner_async_wrapper_text(&TOGETHER_CONFIG, &RUN_FUNC_REACT, input, 100).await?;
+    let res = chat_inner_async_wrapper_text(&QWEN_CONFIG, &RUN_FUNC_REACT, input, 5).await?;
 
     Ok(res)
 }
 
-use std::io::Write;
-use tokio::sync::mpsc;
-use tokio::task;
 
 pub async fn run_python_func_react(func_path: &str) -> Result<String> {
     let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")

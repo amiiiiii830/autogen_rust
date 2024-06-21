@@ -1,9 +1,9 @@
 use anyhow::Result;
 use autogen_rust::exec_python::run_python_func_react;
 use autogen_rust::webscraper_hook::*;
+use autogen_rust::RUN_FUNC_REACT;
 use autogen_rust::{immutable_agent::*, task_ledger};
 use tokio;
-use autogen_rust::RUN_FUNC_REACT;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -12,22 +12,27 @@ async fn main() -> Result<()> {
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
 
     let res = run_python_func_react("/Users/jichen/Projects/autogen_rust/src/test.py").await;
-    return Ok(());
 
+    return Ok(());
 
     let guide =
         "today is 2024-06-18, find the stock price info of Nvidia in the past month".to_string();
 
     let ve = search_with_bing(
-        "today is 2024-06-18, find the stock price info of Nvidia in the past month",
+        "today is 2024-06-18, go get data: https://ca.finance.yahoo.com/quote/NVDA/history",
     )
     .await?;
 
     for (url, _) in ve {
-        let res = get_webpage_guided(url, &guide).await;
+        let res = get_webpage_guided(
+            "https://ca.finance.yahoo.com/quote/NVDA/history".to_string(),
+            &guide,
+        )
+        .await;
 
         println!("solution: {:?}\n\n ", res);
     }
+
     let code = user_proxy
         .code_with_python("create a 5x5 tick tac toe game in python")
         .await?;

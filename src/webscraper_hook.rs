@@ -1,5 +1,5 @@
 use crate::llm_utils::chat_inner_async_wrapper_text;
-use crate::{TOGETHER_CONFIG, WEBPAGE_CLEAN_TEMPLATE, WEBPAGE_CLEAN_WRAPPER};
+use crate::{TOGETHER_CONFIG,QWEN_CONFIG, WEBPAGE_CLEAN_TEMPLATE, WEBPAGE_CLEAN_WRAPPER};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
 use serde::Deserialize;
@@ -17,7 +17,7 @@ pub async fn get_webpage_guided(url: String, guide: &str) -> anyhow::Result<Stri
     let user_prompt = formatter(&[guide, &res]);
 
     let clean =
-        chat_inner_async_wrapper_text(&TOGETHER_CONFIG, WEBPAGE_CLEAN_TEMPLATE, &user_prompt, 1500)
+        chat_inner_async_wrapper_text(&QWEN_CONFIG, WEBPAGE_CLEAN_TEMPLATE, &user_prompt, 1500)
             .await?;
 
     Ok(clean)

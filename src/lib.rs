@@ -25,6 +25,20 @@ const TOGETHER_CONFIG: LlmConfig = LlmConfig {
     api_key_str: "TOGETHER_API_KEY",
 };
 
+const CODELLAMA_CONFIG: LlmConfig = LlmConfig {
+    model: "codellama/CodeLlama-34b-Instruct-hf",
+    context_size: 8192,
+    base_url: "https://api.together.xyz/v1/chat/completions",
+    api_key_str: "TOGETHER_API_KEY",
+};
+
+const QWEN_CONFIG: LlmConfig = LlmConfig {
+    model: "Qwen/Qwen2-72B-Instruct",
+    context_size: 32000,
+    base_url: "https://api.deepinfra.com/v1/openai/chat/completions",
+    api_key_str: "DEEPINFRA_API_KEY",
+};
+
 const DEEPSEEK_CONFIG: LlmConfig = LlmConfig {
     model: "deepseek-coder",
     context_size: 16000,
