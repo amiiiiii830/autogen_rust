@@ -1,7 +1,6 @@
 use anyhow::Result;
 use autogen_rust::exec_python::run_python_func_react;
 use autogen_rust::webscraper_hook::*;
-use autogen_rust::RUN_FUNC_REACT;
 use autogen_rust::{immutable_agent::*, task_ledger};
 use tokio;
 

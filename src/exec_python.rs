@@ -3,13 +3,14 @@ use crate::llm_utils::chat_inner_async_wrapper_text;
 use regex::Regex;
 // use rustpython::vm;
 // use rustpython::InterpreterConfig;
-use crate::{QWEN_CONFIG, RUN_FUNC_REACT, TOGETHER_CONFIG};
+use crate::{QWEN_CONFIG, RUN_FUNC_REACT, TOGETHER_CONFIG,};
 use anyhow::Result;
 use std::io::{BufRead, BufReader};
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
-use std::io::Write;
 use tokio::sync::mpsc;
 use tokio::task;
+
 
 pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, String) {
     println!("raw code: {:?}\n\n", code_wrapped_in_text);
@@ -72,9 +73,8 @@ pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, St
     })
 } */
 
-
 pub async fn llm_play(input: &str) -> Result<String> {
-    let res = chat_inner_async_wrapper_text(&QWEN_CONFIG, &RUN_FUNC_REACT, input, 5).await?;
+    let res = chat_inner_async_wrapper_text(&QWEN_CONFIG, &RUN_FUNC_REACT, input, 1).await?;
 
     Ok(res)
 }
@@ -89,42 +89,58 @@ pub async fn run_python_func_react(func_path: &str) -> Result<String> {
         .spawn()?;
 
     let mut stdin = cmd.stdin.take().unwrap();
-    let stdout = cmd.stdout.take().unwrap();
-    let stderr = cmd.stderr.take().unwrap();
+    let mut stdout = cmd.stdout.take().unwrap();
+    let mut  stderr = cmd.stderr.take().unwrap();
 
-    let (tx, mut rx) = mpsc::channel(100);
+    // Create a TCP socket pair for communication
+    let (stdout_tx, mut stdout_rx) = mpsc::channel(100);
+    let (stderr_tx, _) = mpsc::channel(100);
 
     // Spawn a task to read from stdout and send to LLM
-    let stdout_task: task::JoinHandle<Result<String, anyhow::Error>> = task::spawn(async move {
-        let mut stdout_lines = BufReader::new(stdout).lines();
+    let stdout_task = task::spawn(async move {
         let mut stdout_output = String::new();
-        while let Some(line) = stdout_lines.next() {
-            let line = line.expect("Failed to read line from stdout");
-            stdout_output.push_str(&line);
-            stdout_output.push('\n');
-            if let Err(e) = tx.send(line).await {
-                eprintln!("Failed to send line to channel: {}", e);
+        let mut buffer = [0; 1024];
+        loop {
+            match stdout.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    stdout_output.push_str(&String::from_utf8_lossy(&buffer[0..n]));
+                    stdout_tx
+                        .send(String::from_utf8_lossy(&buffer[0..n]).to_string())
+                        .await?;
+                }
+                Err(e) => return Err(anyhow::anyhow!("Failed to read from stdout: {}", e)),
             }
         }
-        Result::Ok(stdout_output)
+        Ok(stdout_output)
     });
 
     // Spawn a task to read from stderr
-    let stderr_task: task::JoinHandle<Result<String, anyhow::Error>> = task::spawn(async move {
-        let mut stderr_lines = BufReader::new(stderr).lines();
+    let stderr_task = task::spawn(async move {
         let mut stderr_output = String::new();
-        while let Some(line) = stderr_lines.next() {
-            let line = line.expect("Failed to read line from stderr");
-            stderr_output.push_str(&line);
-            stderr_output.push('\n');
+        let mut buffer = [0; 1024];
+        loop {
+            match stderr.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    stderr_output.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                    stderr_tx
+                        .send(String::from_utf8_lossy(&buffer[..n]).to_string())
+                        .await?;
+                }
+                Err(e) => return Err(anyhow::anyhow!("Failed to read from stderr: {}", e)),
+            }
         }
-        Result::Ok(stderr_output)
+        Ok(stderr_output)
     });
 
-    // Main loop to interact with LLM and send input to Python process
-    while let Some(line) = rx.recv().await {
+    // Process the output from the Python process and send it to the LLM
+    while let Some(line) = stdout_rx.recv().await {
         let input = line.trim().to_string();
+        println!("code output: {:?}", input.clone());
         let llm_response = llm_play(&input).await?;
+        println!("llm action: {:?}", llm_response.clone());
+
         stdin.write_all(llm_response.as_bytes())?;
         stdin.write_all(b"\n")?;
     }
@@ -140,6 +156,67 @@ pub async fn run_python_func_react(func_path: &str) -> Result<String> {
         Err(anyhow::anyhow!("Error: {}", stderr_result))
     }
 }
+
+/* pub async fn run_python_func_mpsc(func_path: &str) -> Result<String> {
+    let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")
+        .arg(func_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut stdin = cmd.stdin.take().unwrap();
+    let stdout = cmd.stdout.take().unwrap();
+    let stderr = cmd.stderr.take().unwrap();
+
+    //maybe use sockets is a better choice
+    let (tx, mut rx) = mpsc::channel(100);
+
+    // Spawn a task to read from stdout and send to LLM, use socket to read a block of stdout so that it won't miss
+    //output in the terminal pending user interaction
+    let stdout_task: task::JoinHandle<Result<String, anyhow::Error>> = task::spawn(async move {
+        let mut stdout_lines = BufReader::new(stdout);
+        let mut stdout_output = String::new();
+        println!("before stdout");
+
+        let _ = stdout_lines.read_to_string(&mut stdout_output);
+        println!("stdout: {:?}", stdout_output.clone());
+
+        tx.send(stdout_output.clone()).await;
+        Result::Ok(stdout_output)
+    });
+
+    let stderr_task: task::JoinHandle<Result<String, anyhow::Error>> = task::spawn(async move {
+        let mut stderr_lines = BufReader::new(stderr).lines();
+        let mut stderr_output = String::new();
+        while let Some(line) = stderr_lines.next() {
+            let line = line.expect("Failed to read line from stderr");
+            stderr_output.push_str(&line);
+            stderr_output.push('\n');
+        }
+        Result::Ok(stderr_output)
+    });
+
+    // need to make sure llm gets everything that code generated so far
+    while let Some(line) = rx.recv().await {
+        let input = line.trim().to_string();
+        println!("code output: {:?}", input.clone());
+        let llm_response = llm_play(&input).await?;
+        stdin.write_all(llm_response.as_bytes())?;
+        stdin.write_all(b"\n")?;
+    }
+
+    let stdout_result = stdout_task.await??;
+    let stderr_result = stderr_task.await??;
+
+    let status = cmd.wait()?;
+
+    if status.success() {
+        Ok(stdout_result)
+    } else {
+        Err(anyhow::anyhow!("Error: {}", stderr_result))
+    }
+} */
 
 pub async fn run_python_func(func_path: &str) -> Result<String> {
     let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")

@@ -49,7 +49,9 @@ const DEEPSEEK_CONFIG: LlmConfig = LlmConfig {
 type FormatterFn = Box<dyn (Fn(&[&str]) -> String) + Send + Sync>;
 
 pub const RUN_FUNC_REACT: &'static str = r#"
-<|im_start|>system You are a python code tester. A draft python code in running, you're to read its output, come up with an input, continue to interact with the code run until end."#;
+<|im_start|>system You are a python code tester. You are testing a 5x5 tick tac toe game in python. The game is on, you need to understand the move according to what you "see", decide the logical next move, generate a response so that the program can proceed normally, continue to interact with the code run until end. In your reply, your reply what is needed exactly by the program run, nothing more, nothing less"#;
+
+// <|im_start|>system You are a python code tester. You are testing a program generated for this task: create a 5x5 tick tac toe game in python. The prgram is running, you need to understand what the program is about, then read its output, decide where the program in going, generate a response so that the program can proceed normally, continue to interact with the code run until end. In your reply, your reply what is needed exactly by the program run, nothing more, nothing less"#;
 
 const WEBPAGE_CLEAN_TEMPLATE: &'static str = r#"
 <|im_start|>system You are a helpful AI assistant. You pick data from a given source according to instructions. You either pick some data if you see it irrelevant or you don't pick otherwise. You DO NOT transform the data. You DO NOT OMMIT any data that's relevant to the task. Extract the data in its entirety, echo extracted data verbatim."#;
