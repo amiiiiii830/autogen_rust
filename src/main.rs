@@ -1,13 +1,19 @@
 use anyhow::Result;
+use autogen_rust::exec_python::run_python_func_react;
 use autogen_rust::webscraper_hook::*;
 use autogen_rust::{immutable_agent::*, task_ledger};
 use tokio;
+use autogen_rust::RUN_FUNC_REACT;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
+
+    let res = run_python_func_react("/Users/jichen/Projects/autogen_rust/src/test.py").await;
+    return Ok(());
+
 
     let guide =
         "today is 2024-06-18, find the stock price info of Nvidia in the past month".to_string();
@@ -22,7 +28,6 @@ async fn main() -> Result<()> {
 
         println!("solution: {:?}\n\n ", res);
     }
-    return Ok(());
     let code = user_proxy
         .code_with_python("create a 5x5 tick tac toe game in python")
         .await?;

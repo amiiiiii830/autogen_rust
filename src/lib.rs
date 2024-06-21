@@ -34,6 +34,9 @@ const DEEPSEEK_CONFIG: LlmConfig = LlmConfig {
 
 type FormatterFn = Box<dyn (Fn(&[&str]) -> String) + Send + Sync>;
 
+pub const RUN_FUNC_REACT: &'static str = r#"
+<|im_start|>system You are a python code tester. A draft python code in running, you're to read its output, come up with an input, continue to interact with the code run until end."#;
+
 const WEBPAGE_CLEAN_TEMPLATE: &'static str = r#"
 <|im_start|>system You are a helpful AI assistant. You pick data from a given source according to instructions. You either pick some data if you see it irrelevant or you don't pick otherwise. You DO NOT transform the data. You DO NOT OMMIT any data that's relevant to the task. Extract the data in its entirety, echo extracted data verbatim."#;
 

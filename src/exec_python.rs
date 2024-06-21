@@ -1,7 +1,9 @@
 use crate::immutable_agent::save_py_to_disk;
+use crate::llm_utils::chat_inner_async_wrapper_text;
 use regex::Regex;
 // use rustpython::vm;
 // use rustpython::InterpreterConfig;
+use crate::{RUN_FUNC_REACT, TOGETHER_CONFIG};
 use anyhow::Result;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -88,6 +90,77 @@ pub async fn run_python_wrapper(code_wrapped_in_text: &str) -> (bool, String, St
 //             let _ = vm.run_code_string(vm.new_scope_with_builtins(), code, "<...>".to_owned());
 //         });
 // }
+
+pub async fn llm_play(input: &str) -> Result<String> {
+    let res = chat_inner_async_wrapper_text(&TOGETHER_CONFIG, &RUN_FUNC_REACT, input, 100).await?;
+
+    Ok(res)
+}
+
+use std::io::Write;
+use tokio::sync::mpsc;
+use tokio::task;
+
+pub async fn run_python_func_react(func_path: &str) -> Result<String> {
+    let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")
+        .arg(func_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut stdin = cmd.stdin.take().unwrap();
+    let stdout = cmd.stdout.take().unwrap();
+    let stderr = cmd.stderr.take().unwrap();
+
+    let (tx, mut rx) = mpsc::channel(100);
+
+    // Spawn a task to read from stdout and send to LLM
+    let stdout_task: task::JoinHandle<Result<String, anyhow::Error>> = task::spawn(async move {
+        let mut stdout_lines = BufReader::new(stdout).lines();
+        let mut stdout_output = String::new();
+        while let Some(line) = stdout_lines.next() {
+            let line = line.expect("Failed to read line from stdout");
+            stdout_output.push_str(&line);
+            stdout_output.push('\n');
+            if let Err(e) = tx.send(line).await {
+                eprintln!("Failed to send line to channel: {}", e);
+            }
+        }
+        Result::Ok(stdout_output)
+    });
+
+    // Spawn a task to read from stderr
+    let stderr_task: task::JoinHandle<Result<String, anyhow::Error>> = task::spawn(async move {
+        let mut stderr_lines = BufReader::new(stderr).lines();
+        let mut stderr_output = String::new();
+        while let Some(line) = stderr_lines.next() {
+            let line = line.expect("Failed to read line from stderr");
+            stderr_output.push_str(&line);
+            stderr_output.push('\n');
+        }
+        Result::Ok(stderr_output)
+    });
+
+    // Main loop to interact with LLM and send input to Python process
+    while let Some(line) = rx.recv().await {
+        let input = line.trim().to_string();
+        let llm_response = llm_play(&input).await?;
+        stdin.write_all(llm_response.as_bytes())?;
+        stdin.write_all(b"\n")?;
+    }
+
+    let stdout_result = stdout_task.await??;
+    let stderr_result = stderr_task.await??;
+
+    let status = cmd.wait()?;
+
+    if status.success() {
+        Ok(stdout_result)
+    } else {
+        Err(anyhow::anyhow!("Error: {}", stderr_result))
+    }
+}
 
 pub async fn run_python_func(func_path: &str) -> Result<String> {
     let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")
