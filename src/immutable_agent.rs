@@ -522,7 +522,7 @@ pub async fn save_py_to_disk(path: &str, code: &str) -> Result<()> {
 
 pub async fn get_user_feedback() -> Result<String> {
     use std::io::{self, Write};
-    print!("User input: ");
+    // print!("User input: ");
 
     io::stdout().flush().expect("Failed to flush stdout");
 

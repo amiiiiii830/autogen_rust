@@ -1,5 +1,3 @@
-import python
-
 def print_board(board):
     for row in board:
         print("|".join(row))
@@ -46,6 +44,8 @@ def main():
                 current_player = 'O' if current_player == 'X' else 'X'
         else:
             print("That spot is already taken. Try again.")
+        # if row == 1 and col == 1:
+        #     raise ValueError("Hardcoded error: Invalid move at row 1, col 1")
 
 if __name__ == "__main__":
     main()

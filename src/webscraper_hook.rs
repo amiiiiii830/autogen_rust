@@ -1,5 +1,5 @@
 use crate::llm_utils::chat_inner_async_wrapper_text;
-use crate::{TOGETHER_CONFIG,QWEN_CONFIG, WEBPAGE_CLEAN_TEMPLATE, WEBPAGE_CLEAN_WRAPPER};
+use crate::{QWEN_CONFIG, TOGETHER_CONFIG, WEBPAGE_CLEAN_TEMPLATE, WEBPAGE_CLEAN_WRAPPER};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
 use serde::Deserialize;
@@ -30,6 +30,14 @@ pub async fn get_webpage_text(url: String) -> anyhow::Result<String> {
 
     let res = client.get(&url).send().await?.text().await?;
     Ok(res)
+}
+
+pub async fn search_for_hint(url: String) -> anyhow::Result<String> {
+    let ve = search_with_bing(&url).await?;
+
+    let suggested_content = ve.get(0).unwrap().1.to_string();
+
+    Ok(suggested_content)
 }
 
 pub async fn search_with_bing(query: &str) -> anyhow::Result<Vec<(String, String)>> {
