@@ -10,7 +10,10 @@ async fn main() -> Result<()> {
 
     let user_proxy = ImmutableAgent::simple("user_proxy", "");
 
-    let res = run_python_func_react("/Users/jichen/Projects/autogen_rust/src/test.py").await;
+    match run_python_func_react("/Users/jichen/Projects/autogen_rust/src/test.py").await {
+        Ok(res) => println!("solution: {:?}\n\n ", res),
+        Err(res) => println!("code run error: {:?}\n\n ", res),
+    };
 
     return Ok(());
 

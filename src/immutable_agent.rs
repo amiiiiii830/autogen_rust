@@ -231,31 +231,6 @@ impl ImmutableAgent {
         }
     }
 
-    pub async fn get_user_feedback(&self) -> String {
-        use std::io::{self, Write};
-        print!("User input: ");
-
-        io::stdout().flush().expect("Failed to flush stdout");
-
-        let mut input = String::new();
-
-        io::stdin()
-            .read_line(&mut input)
-            .expect("Failed to read line");
-
-        if let Some('\n') = input.chars().next_back() {
-            input.pop();
-        }
-        if let Some('\r') = input.chars().next_back() {
-            input.pop();
-        }
-
-        if input == "stop" {
-            std::process::exit(0);
-        }
-        return input;
-    }
-
     pub async fn next_step_by_toolcall(
         &self,
         carry_over: Option<String>,
@@ -399,7 +374,7 @@ impl ImmutableAgent {
                     key_points.clone()
                 );
                 if terminate_or_not {
-                    self.get_user_feedback().await;
+                    let _ = get_user_feedback().await;
                 }
                 return Ok(terminate_or_not);
             }
@@ -469,7 +444,7 @@ impl ImmutableAgent {
                         if terminate_or_not {
                             println!("key_points: {:?}\n", key_points);
 
-                            self.get_user_feedback().await;
+                            get_user_feedback().await;
                         }
                     }
 
@@ -543,4 +518,32 @@ pub async fn save_py_to_disk(path: &str, code: &str) -> Result<()> {
         .context("Failed to write code to file")?;
 
     Ok(())
+}
+
+pub async fn get_user_feedback() -> Result<String> {
+    use std::io::{self, Write};
+    print!("User input: ");
+
+    io::stdout().flush().expect("Failed to flush stdout");
+
+    let mut input = String::new();
+
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read line");
+
+    if let Some('\n') = input.chars().next_back() {
+        input.pop();
+    }
+    if let Some('\r') = input.chars().next_back() {
+        input.pop();
+    }
+
+    if input == "stop" {
+        std::process::exit(0);
+    }
+    if input == "back" {
+        return Err(anyhow::Error::msg("back to main"));
+    }
+    return Ok(input);
 }
