@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
+use tokio::io::{self, AsyncBufReadExt};
+use tokio::time::{timeout, Duration};
 
 pub static GROUNDING_CHECK_TEMPLATE: Lazy<String> = Lazy::new(|| {
     let today = Utc::now().format("%Y-%m-%dT").to_string();
@@ -521,29 +523,39 @@ pub async fn save_py_to_disk(path: &str, code: &str) -> Result<()> {
 }
 
 pub async fn get_user_feedback() -> Result<String> {
-    use std::io::{self, Write};
     // print!("User input: ");
 
-    io::stdout().flush().expect("Failed to flush stdout");
-
     let mut input = String::new();
+    let mut reader = io::BufReader::new(io::stdin());
 
-    io::stdin()
-        .read_line(&mut input)
-        .expect("Failed to read line");
+    match timeout(Duration::from_secs(10), async {
+        reader
+            .read_line(&mut input)
+            .await
+            .expect("Failed to read line");
+        input
+    })
+    .await
+    {
+        Ok(mut input) => {
+            if let Some('\n') = input.clone().chars().next_back() {
+                input.pop();
+            }
+            if let Some('\r') = input.chars().next_back() {
+                input.pop();
+            }
 
-    if let Some('\n') = input.chars().next_back() {
-        input.pop();
+            if input == "stop" {
+                std::process::exit(0);
+            }
+            if input == "back" {
+                return Err(anyhow::Error::msg("back to main"));
+            }
+            Ok(input)
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(0);
+        }
     }
-    if let Some('\r') = input.chars().next_back() {
-        input.pop();
-    }
-
-    if input == "stop" {
-        std::process::exit(0);
-    }
-    if input == "back" {
-        return Err(anyhow::Error::msg("back to main"));
-    }
-    return Ok(input);
 }

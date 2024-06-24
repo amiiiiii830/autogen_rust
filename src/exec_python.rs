@@ -36,90 +36,7 @@ pub async fn llm_play(input: &str) -> Result<String> {
     Ok(res)
 }
 
-pub async fn run_python_func_test(func_path: &str) -> Result<String> {
-    let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")
-        .arg(func_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let mut stdout = cmd.stdout.take().unwrap();
-    let mut stderr = cmd.stderr.take().unwrap();
-    let mut stdin = cmd.stdin.take().unwrap();
-
-    let (stdout_tx, mut stdout_rx) = mpsc::channel(100);
-
-    let stdout_task = task::spawn(async move {
-        let mut stdout_output = String::new();
-        let mut buffer = [0; 1024];
-        loop {
-            match stdout.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let output = String::from_utf8_lossy(&buffer[0..n]).to_string();
-                    stdout_output.push_str(&output);
-                    stdout_tx.send(output).await?;
-                }
-                Err(e) => return Err(anyhow::anyhow!("Failed to read from stdout: {}", e)),
-            }
-        }
-        Ok(stdout_output)
-    });
-
-    let mut combined_output = String::new();
-
-    println!("before await:");
-    let status = cmd.wait()?;
-    println!("status: {:?}", status.clone());
-    // why there is no status.err() branch? what kind code are you expecting in this arm?
-    match (status.success(), status.code()) {
-        (true, _) => {
-            while let Some(line) = stdout_rx.recv().await {
-                let input = line.trim().to_string();
-                combined_output.push_str(&input);
-                combined_output.push('\n');
-
-                pretty_print_board(&input);
-            }
-            Ok(combined_output)
-        }
-        // further branch it 2 arms, then handle accordingly
-        (false, _) => {
-            //   (false, Some(code)) | (false, None) => {
-            while let Some(line) = stdout_rx.recv().await {
-                let input = line.trim().to_string();
-                combined_output.push_str(&input);
-                combined_output.push('\n');
-
-                pretty_print_board(&input);
-                match get_user_feedback().await {
-                    Ok(human_input) => {
-                        combined_output.push_str(&human_input);
-                        combined_output.push('\n');
-                        stdin.write_all(human_input.as_bytes()).unwrap();
-                        stdin.write_all(b"\n").unwrap();
-                    }
-                    Err(_) => break,
-                };
-            }
-
-            let mut stderr_output = String::new();
-            let _ = stderr.read_to_string(&mut stderr_output)?;
-
-            let stdout_result = stdout_task.await??;
-
-            let final_error = format!("{}\n{}", combined_output, stderr_output);
-            let error_message = match status.code() {
-                Some(code) => format!("Error: Process exited with code {}: {}", code, final_error),
-                None => format!("Error: Process terminated by signal: {}", final_error),
-            };
-            Err(anyhow::anyhow!(error_message))
-        }
-    }
-}
 pub async fn run_python_func_react(func_path: &str) -> Result<String> {
-    //what if I don't pipe stderr, I just get its value at the end? explain it
     let mut cmd = Command::new("/Users/jichen/miniconda3/bin/python")
         .arg(func_path)
         .stdin(Stdio::piped())
@@ -131,62 +48,46 @@ pub async fn run_python_func_react(func_path: &str) -> Result<String> {
     let mut stdout = cmd.stdout.take().unwrap();
 
     let (stdout_tx, mut stdout_rx) = mpsc::channel(100);
-    //need to check somewhere that the python code has successfully concluded, no need to get human input
+
     let stdout_task = task::spawn(async move {
         let mut buffer = [0; 1024];
         loop {
-            match stdout.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(n) => {
+            if let Ok(n) = stdout.read(&mut buffer) {
+                if n == 0 {
+                    break;
+                } else {
                     let output = String::from_utf8_lossy(&buffer[0..n]).to_string();
                     let _ = stdout_tx.send(output).await;
                 }
-                _ => (),
             }
         }
     });
 
     let mut combined_output = String::new();
 
-    if let Ok(status) = cmd.wait() {
-        println!("Command finished with status: {:?}", status);
-        if status.code() == Some(0) {
-            while let Some(block) = stdout_rx.recv().await {
-                let input = block.trim().to_string();
-                combined_output.push_str(&input);
-            }
+    while let Some(block) = stdout_rx.recv().await {
+        let input = block.trim().to_string();
+        if input.is_empty() {
+            break;
         }
-    } else {
-        println!("Failed to check command status");
-        while let Some(block) = stdout_rx.recv().await {
-            let input = block.trim().to_string();
-            combined_output.push_str(&input);
+        combined_output.push_str(&input);
 
-            pretty_print_board(&input);
-            // this block is not executed
-            /* match cmd.wait() {
-                Err(_) => break,
-                Ok(res) if res.success() => break,
-                Ok(res) => match get_user_feedback().await {
-                    Ok(human_input) => {
-                        combined_output.push_str(&human_input);
-                        combined_output.push('\n');
-                        stdin.write_all(human_input.as_bytes()).unwrap();
-                        stdin.write_all(b"\n").unwrap();
-                    }
-                    Err(_) => break,
-                },
-            }; */
-            if let Ok(human_input) = get_user_feedback().await {
+        pretty_print_board(&input);
+
+        match get_user_feedback().await {
+            Ok(human_input) => {
                 combined_output.push_str(&human_input);
                 combined_output.push('\n');
                 stdin.write_all(human_input.as_bytes()).unwrap();
                 stdin.write_all(b"\n").unwrap();
             }
+            Err(_) => {
+                // println!("error: {:?}", e);
+                break;
+            }
         }
     }
 
-    // is this line really needed?
     let _ = stdout_task.await;
 
     let status = cmd.wait()?;
