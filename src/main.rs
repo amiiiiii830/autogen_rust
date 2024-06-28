@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
         )
         .await;
 
-        println!("solution: {:?}\n\n ", res);
+        println!("solution: {:?}\n\n ", res);vscode-remote://ssh-remote%2Bd16/home/jaykchen/projects/autogen_rust/src/use_docker.py
     }
 
     let code = user_proxy
